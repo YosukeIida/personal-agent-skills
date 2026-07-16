@@ -1,10 +1,10 @@
-<!-- Copyright 2026 Anthropic PBC -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: eval-audit-and-sweep
 description: This skill should be used when a user wants to (a) audit the quality and reliability of an existing LLM evaluation suite, or (b) determine which Claude model and inference parameters give the best quality-per-dollar and quality-per-second for their specific task by running a parameter sweep over that eval. Applicable to any eval framework (custom harnesses, tau-bench, inspect-ai, pytest-based, etc.) since the guidance is framework-agnostic.
 ---
+
+<!-- Copyright 2026 Anthropic PBC -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Eval Audit and Sweep
 
