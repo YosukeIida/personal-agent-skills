@@ -1,0 +1,4 @@
+interface:
+  display_name: "Grant Figure Assets"
+  short_description: "Make grant-figure icon assets"
+  default_prompt: "Create monochrome assets for an academic grant figure, save raw imagegen outputs, tight-crop them, and make a contact sheet."
