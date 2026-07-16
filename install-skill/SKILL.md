@@ -4,12 +4,12 @@ description: "Install a Claude Code .skill file into dotfiles. Usage: /install-s
 allowed-tools: Bash(mkdir:*), Bash(unzip:*), Read, Write
 ---
 
-Install a `.skill` file into the dotfiles-managed skills directory so it becomes available globally in Claude Code.
+Install a `.skill` file into a dotfiles-managed skills location so it becomes available globally in Claude Code.
 
 ## Target directories
 
 - **private**: `~/workspace/github.com/YosukeIida/dotfiles-private/agents/skills/` — for personal/sensitive skills
-- **public**: `~/workspace/github.com/YosukeIida/dotfiles/agents/skills/` — for shareable skills
+- **public**: `~/workspace/github.com/YosukeIida/personal-agent-skills/` — for shareable skills (root-level `<skill>/SKILL.md` layout)
 
 ## Steps
 
