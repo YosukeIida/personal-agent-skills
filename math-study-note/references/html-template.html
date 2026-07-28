@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<!--
+  math-study-note スキルの HTML テンプレート。
+  数値・ラベル・リンク先はすべてダミー（1.234 等）。使うときは自分のプロジェクトの値に置き換える。
+  逆に、実プロジェクトの実測値をこのテンプレートに書き戻さないこと
+  （公開 repo なので未公開データが載る／他研究の値が誤コピーされる）。
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>タイトル — サブタイトル</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
+<style>
+:root{
+  --paper:#F6F8FB;
+  --grid:rgba(43,76,126,.07);
+  --ink:#1F2937;
+  --sub:#5B6472;
+  --indigo:#2B4C7E;
+  --indigo-soft:#E7EDF6;
+  --teal:#2B7A78;
+  --teal-soft:#E4F1F0;
+  --plum:#8A4B9E;
+  --plum-soft:#F1E8F5;
+  --amber:#E8A33D;
+  --amber-soft:#FBEFD9;
+  --shu:#C43C3C;
+  --shu-soft:#F9E9E9;
+  --card:#FFFFFF;
+  --line:#D8DFE9;
+  --mono:'IBM Plex Mono',monospace;
+  --serif:'Shippori Mincho',serif;
+  --sans:'Zen Kaku Gothic New',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);color:var(--ink);line-height:1.85;font-size:16px;
+  background:linear-gradient(var(--grid) 1px,transparent 1px),
+             linear-gradient(90deg,var(--grid) 1px,transparent 1px),var(--paper);
+  background-size:28px 28px,28px 28px,auto}
+.wrap{max-width:880px;margin:0 auto;padding:0 20px 96px}
+
+header{padding:64px 0 40px;border-bottom:3px double var(--indigo)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--indigo);margin-bottom:14px}
+h1{font-family:var(--serif);font-weight:800;font-size:clamp(26px,5vw,40px);line-height:1.4;color:var(--indigo)}
+h1 .accent{color:var(--shu)}
+.lede{margin-top:18px;color:var(--sub);max-width:660px}
+.lede strong{color:var(--ink)}
+
+section{margin-top:72px}
+.sec-label{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--indigo);
+  border-left:3px solid var(--indigo);padding-left:10px;margin-bottom:10px}
+h2{font-family:var(--serif);font-weight:700;font-size:clamp(21px,3.4vw,27px);line-height:1.5;margin-bottom:16px}
+h3{font-family:var(--serif);font-weight:700;font-size:18px;margin:26px 0 10px}
+h4{font-family:var(--serif);font-weight:700;font-size:15.5px;margin:18px 0 6px;color:var(--indigo)}
+p{margin-bottom:12px}
+ul,ol{margin:0 0 12px 1.4em}
+li{margin-bottom:5px}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;
+  box-shadow:0 1px 2px rgba(31,41,55,.04)}
+.card + .card{margin-top:16px}
+.note{background:var(--indigo-soft);border-left:4px solid var(--indigo);border-radius:0 12px 12px 0;
+  padding:14px 18px;margin:16px 0;font-size:14.5px}
+.note.warn{background:var(--shu-soft);border-left-color:var(--shu)}
+.note.strict{background:var(--teal-soft);border-left-color:var(--teal)}
+.note b{color:var(--ink)}
+.term{font-weight:700;background:linear-gradient(transparent 62%,var(--amber-soft) 62%)}
+code,.mono{font-family:var(--mono);font-size:.92em}
+
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:12px;background:var(--card);
+  border-radius:12px;overflow:hidden}
+th,td{padding:11px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--indigo-soft);font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--indigo)}
+tr:last-child td{border-bottom:none}
+.tbl-wrap{overflow-x:auto}
+
+.pill{font-family:var(--mono);font-size:11px;border-radius:99px;padding:2px 9px;font-weight:600;
+  white-space:nowrap;display:inline-block}
+.pill.todo{background:var(--shu-soft);color:var(--shu);border:1px solid var(--shu)}
+.pill.ok{background:var(--teal-soft);color:var(--teal);border:1px solid var(--teal)}
+.pill.layer{background:var(--indigo-soft);color:var(--indigo);border:1px solid var(--indigo)}
+
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
+@media(max-width:700px){.compare{grid-template-columns:1fr}}
+.method{border-radius:14px;padding:20px;border:1.5px solid}
+.method.teal{background:var(--teal-soft);border-color:var(--teal)}
+.method.plum{background:var(--plum-soft);border-color:var(--plum)}
+.method h3{margin-top:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.method.teal h3{color:var(--teal)}
+.method.plum h3{color:var(--plum)}
+.badge{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:#fff;border-radius:99px;
+  padding:2px 10px;font-weight:600}
+.badge.teal{background:var(--teal)} .badge.plum{background:var(--plum)}
+.method ul{list-style:none;font-size:14.5px;margin:10px 0 0}
+.method li{padding-left:1.3em;position:relative;margin-bottom:6px}
+.method li::before{content:"—";position:absolute;left:0;opacity:.5}
+
+.fig{width:100%;height:auto;display:block;margin:6px 0 4px}
+.fig-cap{font-size:13px;color:var(--sub);margin-top:6px}
+.png-fig{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;background:#fff}
+
+.derive{font-size:14.5px;color:var(--sub);margin:8px 0 0}
+.derive li{margin-bottom:4px}
+.katex-display{margin:14px 0}
+.answer{border:1.5px solid var(--teal);background:var(--teal-soft);border-radius:14px;padding:18px 22px;margin-top:18px}
+.answer .lbl{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;color:var(--teal);font-weight:600}
+
+footer{margin-top:80px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;
+  color:var(--sub);font-family:var(--mono)}
+footer a{color:var(--indigo)}
+/* ---------- 図: 3層の地図（HTML 組み — SVG では KaTeX が効かないため） ---------- */
+.layer-map{display:grid;grid-template-columns:1fr 232px;gap:10px 14px;margin:6px 0 4px}
+@media(max-width:700px){.layer-map{grid-template-columns:1fr}}
+.layer{border-radius:12px;padding:14px 16px;border:1.8px solid}
+.layer.l1{background:var(--indigo-soft);border-color:var(--indigo)}
+.layer.l2{background:var(--teal-soft);border-color:var(--teal)}
+.layer.l3{background:var(--amber-soft);border-color:var(--amber)}
+.layer .lno{font-family:var(--mono);font-size:11px;letter-spacing:.14em;font-weight:600;margin-right:10px}
+.layer.l1 .lno{color:var(--indigo)}
+.layer.l2 .lno{color:var(--teal)}
+.layer.l3 .lno{color:#B57F22}
+.layer .lname{font-weight:700;font-size:14.5px}
+.layer.l1 .lmath{color:var(--indigo)}
+.layer.l2 .lmath{color:var(--teal)}
+.layer.l3 .lmath{color:#B57F22}
+.layer-use.u1 b{color:var(--indigo)}
+.layer-use.u2 b{color:var(--teal)}
+.layer-use.u3 b{color:#B57F22}
+.layer .lbody{font-size:13.5px;color:var(--sub);margin-top:2px;line-height:1.7}
+.layer .lmath{margin-top:6px;font-size:15px}
+.layer-use{background:var(--card);border:1.2px solid var(--line);border-radius:12px;padding:12px 14px;
+  font-size:13px;display:flex;flex-direction:column;justify-content:center;gap:3px}
+.layer-use b{font-size:13.5px}
+.layer-use span{color:var(--sub);font-size:12.5px}
+.layer-arrow{grid-column:1/-1;text-align:center;font-size:12.5px;color:var(--sub);margin:-2px 0}
+.layer-arrow::before{content:"↓";display:block;font-size:20px;line-height:1.1;color:var(--indigo)}
+.layer-arrow.key{color:var(--shu);font-weight:700}
+
+/* ---------- 図: 分離不能バー ---------- */
+.barfig{margin:6px 0 4px}
+.barlab{font-size:13.5px;font-weight:700;margin:14px 0 6px}
+.barlab:first-child{margin-top:0}
+.bar{border-radius:9px;height:52px;display:flex;align-items:center;justify-content:center;font-size:15px}
+.bar.meas{background:var(--indigo-soft);border:1.8px solid var(--indigo);color:var(--indigo)}
+.bar.split{border:1.5px solid var(--line);background:linear-gradient(90deg,#F3F6FA 0 61%,#FFFFFF 61% 100%);
+  position:relative;padding:0}
+.bar.split .half{flex:1;text-align:center;color:var(--sub);font-size:14.5px}
+.bar.split .half.q-h{color:var(--sub)}
+.bar.split .divider{position:absolute;left:61%;top:-8px;bottom:-8px;border-left:2.5px dashed var(--shu)}
+.barnote{text-align:center;font-size:12.5px;color:var(--shu);font-weight:700;margin-top:12px}
+.bar-side{font-size:12.5px;margin-top:6px;text-align:right}
+.bar-side.ok{color:var(--teal)} .bar-side.ng{color:var(--shu)}
+
+/* ---------- 図: forced / free の分布対比 ---------- */
+.method.shu{background:var(--shu-soft);border-color:var(--shu)}
+.method.shu h3{color:var(--shu)}
+.dist{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0 6px}
+.dist .col{background:var(--card);border-radius:10px;padding:10px 8px 6px;border:1px solid rgba(0,0,0,.06)}
+.dist .dlab{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-align:center;margin-bottom:6px}
+.bars{display:flex;align-items:flex-end;justify-content:center;gap:6px;height:76px;
+  border-bottom:1.4px solid var(--line);padding-bottom:0}
+.bars i{display:block;width:17px;border-radius:2px 2px 0 0}
+.dfoot{font-size:11.5px;color:var(--sub);text-align:center;margin-top:5px;line-height:1.5}
+.concl{background:var(--card);border-radius:10px;padding:12px 14px;text-align:center;margin-top:8px;
+  border:1.4px solid}
+.method.teal .concl{border-color:var(--teal);color:var(--teal)}
+.method.shu .concl{border-color:var(--shu);color:var(--shu)}
+.concl .ctext{font-size:12.5px;color:var(--sub);margin-top:4px}
+
+/* ---------- 図: 合法集合の入れ子 ---------- */
+.nestfig{display:grid;grid-template-columns:1fr 300px;gap:16px;margin:6px 0 4px}
+@media(max-width:760px){.nestfig{grid-template-columns:1fr}}
+.nest{border-radius:12px;padding:12px 14px;border:1.8px solid}
+.nest.v{background:var(--card);border-color:var(--line);border-width:1.4px}
+.nest.g{background:var(--indigo-soft);border-color:var(--indigo);margin-top:8px}
+.nest.s{background:var(--teal-soft);border-color:var(--teal);margin-top:8px}
+.nest.x{background:var(--amber-soft);border-color:var(--amber);margin-top:8px;text-align:center}
+.nlab{display:block;font-size:13px;font-weight:700}
+.nest.g > .nlab{color:var(--indigo)}
+.nest.s > .nlab{color:var(--teal)}
+.nest.x .nlab{color:#B57F22}
+.nest.v > .nlab{color:var(--sub)}
+.nlab .q{font-weight:400;color:var(--sub);margin-left:6px}
+.nest-other{font-size:12.5px;color:var(--sub);margin-top:8px;padding-left:2px}
+.terms{display:flex;flex-direction:column;gap:10px}
+.term-box{border-radius:10px;padding:10px 12px;border:1.4px solid}
+.term-box.t1{background:var(--indigo-soft);border-color:var(--indigo)}
+.term-box.t2{background:var(--teal-soft);border-color:var(--teal)}
+.term-box.t3{background:var(--amber-soft);border-color:var(--amber)}
+.term-box .tm{font-size:14px}
+.term-box.t1 .tm{color:var(--indigo)}
+.term-box.t2 .tm{color:var(--teal)}
+.term-box.t3 .tm{color:#B57F22}
+.term-box .td{font-size:12px;color:var(--sub);margin-top:2px}
+.nest-sum{grid-column:1/-1;font-size:13px;background:var(--card);border:1px solid var(--line);
+  border-radius:10px;padding:10px 14px;margin-top:2px}
+.nest-sum div{margin:2px 0}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">ENGLISH LABEL — SUBTITLE</div>
+  <h1>日本語タイトル<br><span class="accent">副題（朱で強調）</span></h1>
+  <p class="lede">誰向け・前提知識・このノートで新しく主張すること。<strong>新規の主張・新規の実測値はない</strong>ことを明記する。対応する md は <a href="YYYYMMDD_xxx.md">YYYYMMDD_xxx.md</a>。</p>
+</header>
+
+<!-- ============ §01 層の地図（このテンプレートの中核コンポーネント） ============ -->
+<section id="map">
+  <div class="sec-label">01 / MAP — THREE LAYERS</div>
+  <h2>混乱の正体は「3つの層」を同じ記号で行き来していたこと</h2>
+  <p>本文より前に層を分離する。数式は $...$ で書けば KaTeX が処理し、色は親要素から継承される。</p>
+
+  <div class="card">
+    <div class="layer-map" role="group" aria-label="3つの層の地図">
+      <div class="layer l1">
+        <div><span class="lno">LAYER 1</span><span class="lname">対象全体</span></div>
+        <div class="lbody">変数 $X$ = ◯◯ / 条件付け = $S$（大域的な side information）</div>
+        <div class="lmath">$\Delta = H(X) - H(X\mid S) = I(X;S)$</div>
+      </div>
+      <div class="layer-use u1"><b>使う場面</b><span>補足1</span><span>関連文書</span></div>
+
+      <div class="layer-arrow key">chain rule で位置に降りる（この橋が未記述だった）</div>
+
+      <div class="layer l2">
+        <div><span class="lno">LAYER 2</span><span class="lname">位置ごとの要素</span></div>
+        <div class="lbody">変数 $x_i$ / 条件付け = 履歴 $h_i$</div>
+        <div class="lmath">$-\log q_i(x_i \mid h_i) = D_{KL}(p_i \| q_i)$&nbsp;（等号）</div>
+      </div>
+      <div class="layer-use u2"><b>厳密に言える手法</b><span>関連文書</span></div>
+
+      <div class="layer-arrow">粗視化で要求を弱める</div>
+
+      <div class="layer l3">
+        <div><span class="lno">LAYER 3</span><span class="lname">粗視化</span></div>
+        <div class="lbody">変数 $Z_i = \mathbf{1}\{x_i \in S_i\}$</div>
+        <div class="lmath">$-\log Q_i(S_i) = D_{KL}(p_i^Z \| q_i^Z)$&nbsp;（等号）</div>
+      </div>
+      <div class="layer-use u3"><b>一般化した手法</b><span class="pill todo" style="align-self:flex-start">実測は未了</span></div>
+    </div>
+    <p class="fig-cap">図1: 3つの層。層の間の矢印には「何をして降りたか」を書く。</p>
+  </div>
+
+  <div class="note warn">
+    <b>特に注意:</b> 混同しやすい記号のペアはここで警告する（条件付けの対象が違う等）。
+  </div>
+</section>
+
+<!-- ============ §04 障害のバー図 ============ -->
+<section id="obstacle">
+  <div class="sec-label">04 / THE OBSTACLE</div>
+  <h2>障害：素朴には2項に割れない</h2>
+  <div class="card">
+    <div class="barfig" role="group" aria-label="測れる量と内訳が不明であることを示す図">
+      <div class="barlab">測れるもの（実測値）</div>
+      <div class="bar meas">$1.234\ \text{（単位）}$</div>
+      <div class="bar-side ok">観測可能</div>
+
+      <div class="barlab">その内訳（どこで割れるか分からない）</div>
+      <div class="bar split">
+        <div class="half">$H(p) = ?$</div>
+        <div class="divider"></div>
+        <div class="half">$D_{KL}(p\|q) = ?$</div>
+      </div>
+      <div class="bar-side ng">分離不能</div>
+      <div class="barnote">この境界の位置が原理的に不明（$p$ が未知）</div>
+    </div>
+    <p class="fig-cap">図2: 左辺は測れるのに、右辺の分割位置が決まらない。</p>
+  </div>
+
+  <div class="answer">
+    <div class="lbl">だからこの手法が存在する</div>
+    <p style="margin:8px 0 0">手法の存在理由をここで1文にする。</p>
+  </div>
+</section>
+
+<!-- ============ §06 2つの分布の対比（棒は div の height） ============ -->
+<section id="theorem">
+  <div class="sec-label">06 / THEOREM</div>
+  <h2>仮定を明示して等号を出す</h2>
+  <div class="note"><b>唯一の仮定:</b> ◯◯。以降の等号はすべてこの仮定の上に載る。</div>
+
+  <div class="card">
+    <div class="compare" role="group" aria-label="2つの位置における真の分布とモデル分布の対比">
+      <div class="method teal">
+        <h3>厳密に言える側 <span class="badge teal">H = 0</span></h3>
+        <p style="font-size:14px;margin:0">例: ◯◯。真の分布が1点に集中する。</p>
+        <div class="dist">
+          <div class="col">
+            <div class="dlab" style="color:var(--teal)">TRUE&nbsp; $p_i$</div>
+            <div class="bars">
+              <i style="height:70px;background:#2B7A78"></i>
+              <i style="height:0;background:#8FB3B2"></i>
+              <i style="height:0;background:#8FB3B2"></i>
+            </div>
+            <div class="dfoot">$x_i$ に確率1 → $H = 0$</div>
+          </div>
+          <div class="col">
+            <div class="dlab" style="color:var(--plum)">MODEL&nbsp; $q_i$</div>
+            <div class="bars">
+              <i style="height:46px;background:#8A4B9E"></i>
+              <i style="height:20px;background:#C3A6D1"></i>
+              <i style="height:13px;background:#C3A6D1"></i>
+            </div>
+            <div class="dfoot">漏れた質量＝モデルの誤りだけ</div>
+          </div>
+        </div>
+        <div class="concl">
+          $-\log q_i(x_i) = D_{KL}(p_i \| q_i)$
+          <div class="ctext">払った符号長が<b>全額モデル誤差</b>（等号）</div>
+        </div>
+      </div>
+
+      <div class="method shu">
+        <h3>分離できない側 <span class="badge" style="background:var(--shu)">H &gt; 0</span></h3>
+        <p style="font-size:14px;margin:0">例: ◯◯。真の分布も散る。</p>
+        <div class="dist">
+          <div class="col">
+            <div class="dlab" style="color:var(--shu)">TRUE&nbsp; $p_i$</div>
+            <div class="bars">
+              <i style="height:44px;background:#C43C3C"></i>
+              <i style="height:34px;background:#C43C3C"></i>
+              <i style="height:22px;background:#C43C3C"></i>
+            </div>
+            <div class="dfoot">真の不確実性が残る</div>
+          </div>
+          <div class="col">
+            <div class="dlab" style="color:var(--plum)">MODEL&nbsp; $q_i$</div>
+            <div class="bars">
+              <i style="height:32px;background:#8A4B9E"></i>
+              <i style="height:40px;background:#8A4B9E"></i>
+              <i style="height:18px;background:#C3A6D1"></i>
+            </div>
+            <div class="dfoot">2要因が混ざる</div>
+          </div>
+        </div>
+        <div class="concl">
+          $-\log q_i(x_i) = H(p_i \mid h_i) + D_{KL}(p_i \| q_i)$
+          <div class="ctext">2項が混ざり、<b>分離できない</b></div>
+        </div>
+      </div>
+    </div>
+    <p class="fig-cap">図3: 棒は div の height で描く。ラベルと結論式は HTML なので KaTeX が効く。</p>
+  </div>
+</section>
+
+<!-- ============ §08 集合の入れ子 + 項の対応 ============ -->
+<section id="general">
+  <div class="sec-label">08 / GENERALIZATION</div>
+  <h2>要求を弱めて一般化する</h2>
+  <div class="card">
+    <div class="nestfig" role="group" aria-label="集合の入れ子と各項の対応">
+      <div class="nest v">
+        <span class="nlab">全体 $V$ <span class="q">$\sum_v q_i(v) = 1$</span></span>
+        <div class="nest g">
+          <span class="nlab">$G_i$ : 条件A を満たす <span class="q">質量 $Q_i(G_i)$</span></span>
+          <div class="nest s">
+            <span class="nlab">$S_i$ : 条件B も満たす <span class="q">質量 $Q_i(S_i)$</span></span>
+            <div class="nest x">
+              <span class="nlab">実現値 $x_i$ <span class="q">質量 $q_i(x_i)$</span></span>
+            </div>
+            <div class="nest-other">＋ 他の候補（真の不確実性が残る分）</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="terms">
+        <div class="term-box t1">
+          <div class="tm">① $-\log Q_i(G_i)$</div>
+          <div class="td">第1項の意味</div>
+        </div>
+        <div class="term-box t2">
+          <div class="tm">② $-\log \dfrac{Q_i(S_i)}{Q_i(G_i)}$</div>
+          <div class="td">第2項の意味</div>
+        </div>
+        <div class="term-box t3">
+          <div class="tm">③ $-\log \dfrac{q_i(x_i)}{Q_i(S_i)}$</div>
+          <div class="td">残差（混合のまま）</div>
+        </div>
+      </div>
+
+      <div class="nest-sum">
+        <div>① + ② $= -\log Q_i(S_i) =$ <b style="color:var(--teal)">厳密に言える成分</b></div>
+        <div>① + ② + ③ $= -\log q_i(x_i) =$ 全体（恒等式・被覆率100%）</div>
+      </div>
+    </div>
+    <p class="fig-cap">図4: 入れ子の領域と項リストを<b>同じ色で対応させる</b>のが要点。</p>
+  </div>
+</section>
+
+<!-- ============ §10 言えること・言えないこと ============ -->
+<section id="scope">
+  <div class="sec-label">10 / SCOPE</div>
+  <h2>言えること・言えないこと</h2>
+  <div class="note strict"><b>言える:</b> …（仮定の個数を再掲する）</div>
+  <div class="note warn"><b>言えない:</b> …（未実測・未検証・原理的限界を分けて書く）</div>
+  <p><strong>誇張しない言い方:</strong> 「完全に分離できる」ではなく<span class="term">◯◯成分を厳密に下から押さえられる</span>。</p>
+</section>
+
+<!-- ============ §11 参照マップ ============ -->
+<section id="refmap">
+  <div class="sec-label">11 / REFERENCE MAP</div>
+  <h2>既存文書のどこに何があるか</h2>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>内容</th><th>所在</th></tr></thead>
+    <tbody>
+      <tr><td>◯◯の定義</td><td><a href="YYYYMMDD_xxx.md">YYYYMMDD_xxx.md</a> L88</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note">
+    <b>本ノートで新しく明文化したもの（既存文書にない）:</b> …
+  </div>
+</section>
+
+<footer>
+  作成日: YYYY-MM-DD / 対応する md: <a href="YYYYMMDD_xxx.md">YYYYMMDD_xxx.md</a> / 視覚設計: <a href="../DESIGN.md">DESIGN.md</a>
+</footer>
+
+</div>
+</body>
+</html>
