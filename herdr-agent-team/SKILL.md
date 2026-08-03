@@ -111,6 +111,25 @@ implementation は実装リポジトリ、review は独立した review の cwd�
   いて変えられないので、config と食い違っても `doctor` は「注意」に留める。
 - `kind` は herdr がサポートするもの（`herdr agent --help` の kinds 行で確認）。
   ロールごとに別 kind を混在させてよい。
+- `model` / `effort` は省略可。省略するとその agent の既定に従う。**kind ごとに実フラグへ変換される**
+  （実測で確認、2026-08）:
+
+  | kind | model | effort |
+  |---|---|---|
+  | `claude` | `--model <m>` | `--effort <level>` |
+  | `codex` | `--model <m>` | `-c model_reasoning_effort=<level>` |
+
+  codex の effort は引用符なしで `--strict-config` が受理するので、シェル経由でも安全。
+  対応表を持たない kind では警告して無視する（`launch_flags` に直接書くこと）。
+  **`effort` の段階の意味は kind をまたいで揃っていない。** 同じ `medium` と書いても
+  claude と codex で同じ深さになる保証はないので、ロール単位で調整する前提で扱う。
+- **これらは「そのセッションだけ」の設定で、agent の設定ファイルを書き換えない。**
+  `claude --model` / `--effort` はどちらも "for the current session"（`claude --help` で確認）、
+  codex の `-c` も起動時の config 上書き。`~/.claude/settings.json` や
+  `~/.codex/config.toml` は変更されないので、他の用途の起動には影響しない。
+- **起動後に config の model / effort を変えても、稼働中の agent には反映されない。**
+  `up` は稼働中の agent を起動し直さない（作業を殺さないため）。`doctor` が乖離を検出するので、
+  `swap --role <role> --kind <kind> --force` で入れ替える。
 - `launch_flags`（任意・配列）は `herdr agent start ... -- <flags>` に渡される。
   権限モードは**起動フラグで指定する**こと。起動後に修飾キー送信で切り替えるのは
   信頼できない（shift+tab 等の修飾キー和音は忠実に届かない）。
@@ -157,8 +176,10 @@ implementation は実装リポジトリ、review は独立した review の cwd�
   `pane resize --direction` は**指定した pane がその方向に伸びて広くなる**（縮まない）ので、
   スクリプトが符号を扱う。
 - `doctor` — `agent-absent`（agent が居るべき pane にシェルプロンプト = 落ちている）、
-  cwd 不一致、kind 不一致、mapping が実機と食い違っている、承認待ちで停止、を検出する。
-  検出しても自動修復しない（報告のみ）。
+  cwd 不一致、kind 不一致、**model / effort 不一致**、mapping が実機と食い違っている、
+  承認待ちで停止、を検出する。検出しても自動修復しない（報告のみ）。
+  model / effort は pane の表示から読んで config と突き合わせる（agent が自分の設定を表示するため）。
+  表記の違い（config `opus` / 表示 `Opus 5`）を吸収するため大小無視の部分一致で判定する。
 - `down` — `created_by_skill: true` の pane だけ閉じる。caller pane は絶対に閉じない。
 
 ## 生存確認について

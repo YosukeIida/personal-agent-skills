@@ -625,6 +625,36 @@ cmd_doctor() {
     else
       [ "$kind_live" = "$kind_cfg" ] || {
         note "  [kind不一致] $role ($pane) — 実機=$kind_live / config=$kind_cfg"; problems=$((problems+1)); }
+
+      # model / effort の乖離を検出する。
+      # up は稼働中の agent を起動し直さないので、config を変えても既存 agent には
+      # 反映されない。ここで検出しないと「設定したのに効いていない」に気づけない（実測で踏んだ）。
+      # 実機の値は pane の表示から読む（agent が自分の model/effort を表示している）。
+      local want_model want_effort disp
+      want_model="$(cfg_role_field "$role" model)"
+      want_effort="$(cfg_role_field "$role" effort)"
+      if [ -n "$want_model$want_effort" ]; then
+        disp=""
+        local s2
+        for s2 in detection visible recent-unwrapped; do
+          disp="$(herdr pane read "$pane" --source "$s2" --lines 30 2>/dev/null || true)"
+          [ -n "$disp" ] && break
+        done
+        if [ -n "$disp" ]; then
+          # model 名は表記が異なる（config: opus / 表示: "Opus 5"）ので大小無視の部分一致で見る
+          if [ -n "$want_model" ] && ! printf '%s' "$disp" | grep -qiF "$want_model"; then
+            note "  [model不一致?] $role ($pane) — config=$want_model が pane 表示に見当たらない"
+            note "                 起動後に config を変えた場合は反映されない。swap で入れ替えること:"
+            note "                 herdr-team.sh swap --team $TEAM --role $role --kind $kind_cfg --force"
+            problems=$((problems+1))
+          fi
+          if [ -n "$want_effort" ] && ! printf '%s' "$disp" | grep -qiF "$want_effort"; then
+            note "  [effort不一致?] $role ($pane) — config=$want_effort が pane 表示に見当たらない"
+            problems=$((problems+1))
+          fi
+        fi
+      fi
+
       # pane を読んで承認待ちでないかを見る。
       # source の選択が重要: codex など alternate screen で動く agent は
       # recent-unwrapped / host scrollback が**空**になる（実測）。
