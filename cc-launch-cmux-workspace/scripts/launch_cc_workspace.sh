@@ -11,11 +11,11 @@ USAGE
 }
 
 log() {
-  printf '[cc-launch-workspace] %s\n' "$*" >&2
+  printf '[cc-launch-cmux-workspace] %s\n' "$*" >&2
 }
 
 fail() {
-  printf '[cc-launch-workspace] ERROR: %s\n' "$*" >&2
+  printf '[cc-launch-cmux-workspace] ERROR: %s\n' "$*" >&2
   exit "${2:-1}"
 }
 
@@ -69,9 +69,9 @@ resolve_target() {
       canonical_dir "${matches[0]}"
       ;;
     *)
-      printf '[cc-launch-workspace] ERROR: multiple repos named %s found:\n' "$input" >&2
+      printf '[cc-launch-cmux-workspace] ERROR: multiple repos named %s found:\n' "$input" >&2
       printf '  %s\n' "${matches[@]}" >&2
-      printf '[cc-launch-workspace] Pass an absolute path to choose one.\n' >&2
+      printf '[cc-launch-cmux-workspace] Pass an absolute path to choose one.\n' >&2
       exit 3
       ;;
   esac
@@ -253,10 +253,10 @@ if [ -n "$WORKSPACE_NAME" ]; then
   CREATE_ARGS+=(--name "$WORKSPACE_NAME")
 fi
 
-if CMUX_QUIET=1 cmux "${CREATE_ARGS[@]}" >/tmp/cc-launch-workspace-create.out 2>/tmp/cc-launch-workspace-create.err; then
+if CMUX_QUIET=1 cmux "${CREATE_ARGS[@]}" >/tmp/cc-launch-cmux-workspace-create.out 2>/tmp/cc-launch-cmux-workspace-create.err; then
   log "cmux new-workspace command accepted"
 else
-  log "cmux new-workspace returned an error; checking session JSON anyway: $(tr '\n' ' ' </tmp/cc-launch-workspace-create.err | sed 's/[[:space:]]*$//')"
+  log "cmux new-workspace returned an error; checking session JSON anyway: $(tr '\n' ' ' </tmp/cc-launch-cmux-workspace-create.err | sed 's/[[:space:]]*$//')"
 fi
 
 WORKSPACE_INFO="$(wait_for_workspace "$TARGET_DIR" "$BEFORE_IDS" || true)"
@@ -301,10 +301,10 @@ if [ "$AGENT_KIND" != "claude" ] && ! claude_running_on_tty "$TTY"; then
     CLAUDE_CMD="claude"
   fi
   if cmux send --workspace "$WORKSPACE_ID" "${CLAUDE_CMD}\n" \
-      >/tmp/cc-launch-workspace-send.out 2>/tmp/cc-launch-workspace-send.err; then
+      >/tmp/cc-launch-cmux-workspace-send.out 2>/tmp/cc-launch-cmux-workspace-send.err; then
     log "cmux send accepted"
   else
-    log "cmux send failed: $(tr '\n' ' ' </tmp/cc-launch-workspace-send.err | sed 's/[[:space:]]*$//')"
+    log "cmux send failed: $(tr '\n' ' ' </tmp/cc-launch-cmux-workspace-send.err | sed 's/[[:space:]]*$//')"
   fi
 fi
 

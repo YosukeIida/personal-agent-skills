@@ -1,10 +1,10 @@
 ---
-name: cc-launch-workspace
-description: Launch Claude Code in a new cmux terminal workspace for a specified repository or path. Use when the user asks to open a repo in cmux and start a Claude session, such as "cmux で repo の Claude session を起動して", "新しい workspace で Claude Code を開いて", or "s-code の Claude session を cmux terminal で起動して".
+name: cc-launch-cmux-workspace
+description: Launch Claude Code in a new cmux terminal workspace for a specified repository or path. Use when the user asks to open a repo in cmux and start a Claude session, such as "cmux で repo の Claude session を起動して", "新しい workspace で Claude Code を開いて", or "s-code の Claude session を cmux terminal で起動して". ※cmux 専用（herdr ではない）。herdr で複数ロールのエージェントチームを配備するのは herdr-agent-team が担当。
 allowed-tools: Bash(scripts/launch_cc_workspace.sh:*), Bash(cmux:*), Bash(command:*)
 ---
 
-# cc-launch-workspace
+# cc-launch-cmux-workspace
 
 ## Overview
 

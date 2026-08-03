@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "全リポジトリ共通の既定値。パスは持たない（リポジトリ固有の値は init が解決する）。",
+    "cwd_from は init に渡された --host-repo / --impl-repo / --review-repo のどれを使うかの指定。",
+    "model / effort は省略可。省略するとその agent の既定（~/.claude や ~/.codex の設定）に従う。",
+    "kind ごとに実際のフラグへ変換される: claude は --model / --effort、",
+    "codex は --model / -c model_reasoning_effort=<effort>。",
+    "resident は宛先の受け取り方。既定は herdr（pane に送られる）。external にすると",
+    "pane 宛の送信ではなく events ファイルへの追記で受け取り、reader が init で実体化される。",
+    "この既定値を変えると、以後 init するチーム全部に効く。",
+    "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
+  ],
+  "roles": [
+    { "role": "design",         "kind": "claude", "ratio": 0.40, "caller": true, "cwd_from": "host", "resident": "external" },
+    { "role": "orchestrator",   "kind": "claude", "ratio": 0.24, "cwd_from": "host" },
+    { "role": "implementation", "kind": "claude", "ratio": 0.18, "cwd_from": "implementation" },
+    { "role": "review",         "kind": "codex",  "ratio": 0.18, "cwd_from": "review" }
+  ]
+}

@@ -22,7 +22,7 @@ description: Markdown ファイル（数式入り）を cmux のブラウザペ�
 `cmux browser` 系コマンドは cmux アプリの Unix ソケット（と `$CMUX_WORKSPACE_ID`）を
 必要とする。**Claude Code の Bash シェルがソケットに届くかはセッション依存**：
 
-- cmux ペイン内で起動された Claude（例: cc-launch-workspace 経由）→ 届く・`$CMUX_WORKSPACE_ID` も継承され、直接実行できる。
+- cmux ペイン内で起動された Claude（例: cc-launch-cmux-workspace 経由）→ 届く・`$CMUX_WORKSPACE_ID` も継承され、直接実行できる。
 - cmux の外で起動された Claude → 届かない（`cmux ping` が `Broken pipe`、`$CMUX_WORKSPACE_ID` が空）。この場合は **ユーザーに実行を依頼する**。
 
 ## ワークフロー
