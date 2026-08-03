@@ -64,7 +64,7 @@ load_config() {
   sum="$(jq '[.roles[].ratio] | add' "$CFG")"
   # 合計が 1.0 から大きく外れていたら誤設定
   awk -v s="$sum" 'BEGIN{ if (s < 0.95 || s > 1.05) exit 1 }' \
-    || die "ratio の合計が 1.0 から外れている（現在 $sum）"
+    || die "ratio の合計が 1.0 から外れている（現在 ${sum}）"
 }
 
 cfg_host_repo() { jq -r '.host_repo' "$CFG"; }
@@ -194,7 +194,7 @@ cmd_init() {
 
   local sum; sum="$(jq '[.roles[].ratio] | add' "$tmp")"
   awk -v s="$sum" 'BEGIN{ if (s < 0.95 || s > 1.05) exit 1 }' \
-    || { rm -f "$tmp"; die "ratio の合計が 1.0 から外れている（$sum）。--ratio で調整すること"; }
+    || { rm -f "$tmp"; die "ratio の合計が 1.0 から外れている（${sum}）。--ratio で調整すること"; }
 
   if [ "$DRY_RUN" = 1 ]; then
     note "(dry-run) 生成される内容:"; cat "$tmp"; rm -f "$tmp"; return 0
@@ -276,8 +276,17 @@ cmd_adopt() {
 
 # ---------- サブコマンド: ratio ----------------------------------------------
 
-# pane resize --direction は「指定 pane がその方向に伸びて広くなる」。
-# 隣接2 pane の境界1本しか動かないので、左から順に詰めて収束させる。
+# 幅の下限。これを割ると承認ダイアログが読めなくなるので、下回る計画は実行しない。
+MIN_PANE_COLS="${HERDR_TEAM_MIN_PANE_COLS:-40}"
+
+# 連続 split で作った pane は「入れ子の二分木」になる（p1 | (pA | (pB | pC))）。
+# ここで実測して分かった resize の性質（2026-08 herdr で確認）:
+#   - `resize --pane X --direction D` は X が D 方向に伸びて広くなる（縮まない）
+#   - `--amount` は **その分割ノードのローカル container 幅** に対する比率。
+#     最外の境界だけは container が領域全体なので全体幅比と一致して見える。
+#     内側の境界で全体幅を分母にすると効き量が足りず、反復が発散して
+#     pane が 0〜5 桁まで潰れる（実際に踏んだ）。
+# よって外側の境界から順に、そのつど残り幅を container として計算する。
 cmd_ratio() {
   load_config
   local aw; aw="$(area_width)"
@@ -294,28 +303,56 @@ cmd_ratio() {
   local n=${#order[@]}
   [ "$n" -ge 2 ] || { note "ratio: 対象 pane が 2 未満なので何もしない"; return 0; }
 
-  local i cur tgt delta amount iter
+  # 下限ガード: 目標が下限を割るなら実行しない（潰れた pane を作らない）
+  local i
+  for (( i=0; i<n; i++ )); do
+    if [ "${targets[$i]}" -lt "$MIN_PANE_COLS" ]; then
+      die "目標幅 ${targets[$i]}桁 (${order[$i]}) が下限 ${MIN_PANE_COLS}桁 を割る。
+  この幅では承認ダイアログが読めない。ウィンドウを広げるか、config の ratio を見直すこと
+  （下限は HERDR_TEAM_MIN_PANE_COLS で変えられる）"
+    fi
+  done
+
+  local cur tgt delta amount iter container j prev
   for (( i=0; i<n-1; i++ )); do
-    for (( iter=0; iter<12; iter++ )); do
+    # この境界の container = order[i] 以降の実測幅の合計
+    container=0
+    for (( j=i; j<n; j++ )); do container=$(( container + $(pane_width "${order[$j]}") )); done
+
+    prev=-1
+    for (( iter=0; iter<10; iter++ )); do
       cur="$(pane_width "${order[$i]}")"
       tgt="${targets[$i]}"
       delta=$(( tgt - cur ))
-      # 2桁以内なら十分
-      if [ "${delta#-}" -le 2 ]; then break; fi
-      amount="$(awk -v d="${delta#-}" -v a="$aw" 'BEGIN{printf "%.4f", d/a}')"
+      [ "${delta#-}" -le 2 ] && break
+      # 発散・停滞したら打ち切る（前回より改善していなければ止める）
+      if [ "$prev" -ne -1 ] && [ "${delta#-}" -ge "$prev" ]; then
+        note "! ratio: ${order[$i]} が収束しない（残差 ${delta}桁）。この境界は中断する"
+        break
+      fi
+      prev="${delta#-}"
+      amount="$(awk -v d="${delta#-}" -v c="$container" 'BEGIN{ if (c<=0) c=1; printf "%.4f", d/c }')"
+      if [ "$DRY_RUN" = 1 ]; then
+        if [ "$delta" -gt 0 ]; then note "would: resize ${order[$i]} right $amount (container ${container}桁)"
+        else note "would: resize ${order[$((i+1))]} left $amount (container ${container}桁)"; fi
+        break
+      fi
       if [ "$delta" -gt 0 ]; then
-        [ "$DRY_RUN" = 1 ] && { note "would: resize ${order[$i]} right $amount"; break; }
         herdr pane resize --pane "${order[$i]}" --direction right --amount "$amount" >/dev/null
       else
-        [ "$DRY_RUN" = 1 ] && { note "would: resize ${order[$((i+1))]} left $amount"; break; }
         herdr pane resize --pane "${order[$((i+1))]}" --direction left --amount "$amount" >/dev/null
       fi
     done
   done
+
   note "ratio 適用後:"
+  local warn=0
   for (( i=0; i<n; i++ )); do
-    note "  ${order[$i]}  $(pane_width "${order[$i]}")桁 (目標 ${targets[$i]})"
+    cur="$(pane_width "${order[$i]}")"
+    note "  ${order[$i]}  ${cur}桁 (目標 ${targets[$i]})"
+    [ "$cur" -ge "$MIN_PANE_COLS" ] || warn=1
   done
+  [ "$warn" -eq 0 ] || note "! 下限 ${MIN_PANE_COLS}桁 を割った pane がある。ウィンドウ幅か config を見直すこと"
 }
 
 # ---------- サブコマンド: up -------------------------------------------------
@@ -344,8 +381,9 @@ cmd_up() {
       else
         [ -d "$cwd" ] || die "$role の cwd が存在しない: $cwd"
         if [ "$DRY_RUN" = 1 ]; then
-          note "would: pane split --pane $prev_pane --direction right --cwd $cwd"
-          pane="(new)"; created=true
+          # 実行時は新 pane が次の split 元になるので、その連鎖を表示に反映する
+          note "would: pane split --pane $prev_pane --direction right --cwd $cwd   → $role"
+          pane="(new:$role)"; created=true
         else
           require_id "split 元 pane" "$prev_pane"
           assert_same_workspace "$prev_pane" "$HERDR_WORKSPACE_ID"
@@ -354,11 +392,11 @@ cmd_up() {
           require_id "$role の新 pane" "$pane"
           herdr pane rename "$pane" "$role" >/dev/null 2>&1 || true
           created=true
-          note "$role: pane $pane を作成（cwd=$cwd）"
+          note "$role: pane $pane を作成（cwd=${cwd}）"
         fi
       fi
     fi
-    [ "$pane" = "(new)" ] || prev_pane="$pane"
+    prev_pane="$pane"
     lines+=("$role|$pane|$created")
   done
 
@@ -430,7 +468,7 @@ cmd_swap() {
   else
     herdr agent start "$SWAP_ROLE" --kind "$SWAP_KIND" --pane "$pane" >/dev/null
   fi
-  note "$SWAP_ROLE を $SWAP_KIND で起動した（pane $pane）"
+  note "$SWAP_ROLE を $SWAP_KIND で起動した（pane ${pane}）"
   note "config の kind は変更していない。恒久的に変えるなら $CFG を編集すること"
   cmd_doctor
 }
