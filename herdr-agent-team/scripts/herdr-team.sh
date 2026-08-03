@@ -20,6 +20,12 @@ CONFIG_DIR="${HERDR_TEAM_CONFIG_DIR:-$HOME/.config/herdr-agent-team}"
 die() { printf 'herdr-team: %s\n' "$*" >&2; exit 1; }
 note() { printf '%s\n' "$*"; }
 
+# herdr の agent 名はワークスペース非依存でグローバルに一意（実測で確認、2026-08）。
+# bare role 名（"orchestrator" 等）だけでは複数チームが同居すると agent_name_taken で
+# 衝突する。herdr 向けの識別子はチーム名で名前空間を切る。intent-cli 側の topology は
+# --team/--role/--pane-id で識別するのでこれとは無関係（herdr 内の名前は渡していない）。
+agent_ident() { printf '%s-%s' "$TEAM" "$1"; }
+
 require_env() {
   [ "${HERDR_ENV:-}" = 1 ] || die "herdr の外では操作しない（HERDR_ENV=1 が必要）"
   command -v herdr >/dev/null || die "herdr が PATH にない"
@@ -383,7 +389,17 @@ cmd_adopt() {
 # ---------- サブコマンド: ratio ----------------------------------------------
 
 # 幅の下限。これを割ると承認ダイアログが読めなくなるので、下回る計画は実行しない。
-MIN_PANE_COLS="${HERDR_TEAM_MIN_PANE_COLS:-40}"
+# 優先順: 環境変数 > team config の min_pane_cols > 既定 40。
+# team config に持たせられるのは、画面の広さがチームの運用環境ごとに違うため
+# （ノート単体で回すチームと外部モニタで回すチームで下限が同じである必要はない）。
+min_pane_cols() {
+  local v
+  if [ -n "${HERDR_TEAM_MIN_PANE_COLS:-}" ]; then
+    printf '%s' "$HERDR_TEAM_MIN_PANE_COLS"; return 0
+  fi
+  v="$(jq -r '.min_pane_cols // empty' "$CFG" 2>/dev/null || true)"
+  printf '%s' "${v:-40}"
+}
 
 # ロールの目標幅（桁）= 領域幅 × ratio
 target_cols() {
@@ -415,12 +431,12 @@ cmd_ratio() {
   [ "$n" -ge 2 ] || { note "ratio: 対象 pane が 2 未満なので何もしない"; return 0; }
 
   # 下限ガード: 目標が下限を割るなら実行しない（潰れた pane を作らない）
-  local i
+  local i minc; minc="$(min_pane_cols)"
   for (( i=0; i<n; i++ )); do
-    if [ "${targets[$i]}" -lt "$MIN_PANE_COLS" ]; then
-      die "目標幅 ${targets[$i]}桁 (${order[$i]}) が下限 ${MIN_PANE_COLS}桁 を割る。
+    if [ "${targets[$i]}" -lt "$minc" ]; then
+      die "目標幅 ${targets[$i]}桁 (${order[$i]}) が下限 ${minc}桁 を割る。
   この幅では承認ダイアログが読めない。ウィンドウを広げるか、config の ratio を見直すこと
-  （下限は HERDR_TEAM_MIN_PANE_COLS で変えられる）"
+  （下限は team config の min_pane_cols か、環境変数 HERDR_TEAM_MIN_PANE_COLS で変えられる）"
     fi
   done
 
@@ -461,9 +477,9 @@ cmd_ratio() {
   for (( i=0; i<n; i++ )); do
     cur="$(pane_width "${order[$i]}")"
     note "  ${order[$i]}  ${cur}桁 (目標 ${targets[$i]})"
-    [ "$cur" -ge "$MIN_PANE_COLS" ] || warn=1
+    [ "$cur" -ge "$(min_pane_cols)" ] || warn=1
   done
-  [ "$warn" -eq 0 ] || note "! 下限 ${MIN_PANE_COLS}桁 を割った pane がある。ウィンドウ幅か config を見直すこと"
+  [ "$warn" -eq 0 ] || note "! 下限 $(min_pane_cols)桁 を割った pane がある。ウィンドウ幅か config を見直すこと"
 }
 
 # ---------- サブコマンド: up -------------------------------------------------
@@ -488,8 +504,12 @@ cmd_up() {
       # notify の宛先解決から漏れる（「logical role が見つからない」で fail closed）ため、
       # rename だけは caller にも当てる。
       if [ "$DRY_RUN" != 1 ]; then
-        herdr agent rename "$pane" "$role" >/dev/null 2>&1 \
+        herdr agent rename "$pane" "$(agent_ident "$role")" >/dev/null 2>&1 \
           || note "  ! caller pane の rename に失敗（notify の宛先解決から漏れる可能性）"
+        # pane label（UI 表示用、agent identity とは別物）も非 caller ロールと同様に付ける。
+        # これを忘れると label が null のままになり、UI は agent kind（例: "claude"）に
+        # フォールバック表示する（実測で踏んだ）。
+        herdr pane rename "$pane" "$role" >/dev/null 2>&1 || true
       fi
     else
       pane="$(mapped_pane "$role")"
@@ -558,12 +578,13 @@ cmd_up() {
     fi
     kind="$(cfg_role_field "$role" kind)"
     build_launch_args "$role" "$kind"
-    note "$role: herdr agent start $role --kind $kind --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
+    local ident; ident="$(agent_ident "$role")"
+    note "$role: herdr agent start $ident --kind $kind --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
     if [ "${#LAUNCH_ARGS[@]}" -gt 0 ]; then
-      herdr agent start "$role" --kind "$kind" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null \
+      herdr agent start "$ident" --kind "$kind" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null \
         || note "  ! 起動に失敗（doctor で確認すること）"
     else
-      herdr agent start "$role" --kind "$kind" --pane "$pane" >/dev/null \
+      herdr agent start "$ident" --kind "$kind" --pane "$pane" >/dev/null \
         || note "  ! 起動に失敗（doctor で確認すること）"
     fi
   done
@@ -618,7 +639,7 @@ cmd_swap() {
         while [ "$n" -lt "$1" ]; do _agent_gone && return 0; sleep 1; n=$((n+1)); done
         return 1
       }
-      herdr agent prompt "$SWAP_ROLE" "/exit" >/dev/null 2>&1 || true
+      herdr agent prompt "$(agent_ident "$SWAP_ROLE")" "/exit" >/dev/null 2>&1 || true
       if ! _wait_gone 6; then
         note "  補完メニューで Enter が消費された可能性があるので Enter を追い送りする"
         herdr pane send-keys "$pane" enter >/dev/null 2>&1 || true
@@ -638,14 +659,15 @@ cmd_swap() {
 
   # kind を変えると model/effort のフラグ形式も変わるので、新しい kind で組み直す
   build_launch_args "$SWAP_ROLE" "$SWAP_KIND"
+  local swap_ident; swap_ident="$(agent_ident "$SWAP_ROLE")"
   if [ "$DRY_RUN" = 1 ]; then
-    note "would: herdr agent start $SWAP_ROLE --kind $SWAP_KIND --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
+    note "would: herdr agent start $swap_ident --kind $SWAP_KIND --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
     return 0
   fi
   if [ "${#LAUNCH_ARGS[@]}" -gt 0 ]; then
-    herdr agent start "$SWAP_ROLE" --kind "$SWAP_KIND" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null
+    herdr agent start "$swap_ident" --kind "$SWAP_KIND" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null
   else
-    herdr agent start "$SWAP_ROLE" --kind "$SWAP_KIND" --pane "$pane" >/dev/null
+    herdr agent start "$swap_ident" --kind "$SWAP_KIND" --pane "$pane" >/dev/null
   fi
   note "$SWAP_ROLE を $SWAP_KIND で起動した（pane ${pane}）"
   note "config の kind は変更していない。恒久的に変えるなら $CFG を編集すること"
@@ -672,15 +694,17 @@ cmd_doctor() {
     status="$(pane_field "$pane" agent_status)"
     cwd_live="$(pane_field "$pane" cwd)"
 
-    # 宛先解決は agent の logical role 名で行われる。名前が付いていない agent は
-    # pane が生きていても宛先候補から漏れ、fail closed で配送されない（実測で踏んだ）。
-    # 名前を付けるのは `herdr agent start <role>` なので、pane で直接 `claude` /
-    # `codex` と打って起動した agent には付いていない。
-    local agent_name
+    # herdr の agent 名はワークスペース非依存でグローバルに一意なので、
+    # このスキルは team 名で名前空間を切った識別子（agent_ident）を herdr 側の名前として使う。
+    # intent-cli の宛先解決は --team/--role/--pane-id の topology 記録で行われ、
+    # herdr 側のこの名前とは無関係（record_topology 参照）。
+    # ここでの比較は「このスキルが割り当てた herdr identity が生きているか」の自己整合性チェック。
+    local agent_name want_ident
+    want_ident="$(agent_ident "$role")"
     agent_name="$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)"
-    if [ "$agent_name" != "$role" ]; then
-      note "  [role名なし] $role ($pane) — agent の logical role 名が「${agent_name:-未設定}」"
-      note "               この状態では宛先解決から漏れる。修復: herdr agent rename $pane $role"
+    if [ "$agent_name" != "$want_ident" ]; then
+      note "  [role名なし] $role ($pane) — agent の herdr identity が「${agent_name:-未設定}」（期待値: $want_ident）"
+      note "               この状態では宛先解決から漏れる。修復: herdr agent rename $pane $want_ident"
       problems=$((problems+1))
     fi
 
@@ -810,9 +834,9 @@ cmd_nudge() {
     done
     if printf '%s' "$disp" | grep -q 'Pasted text'; then
       if [ "$DRY_RUN" = 1 ]; then
-        note "  would: herdr agent send-keys $role enter   （${pane} に未 submit の貼り付けがある）"
+        note "  would: herdr agent send-keys $(agent_ident "$role") enter   （${pane} に未 submit の貼り付けがある）"
       else
-        if herdr agent send-keys "$role" enter >/dev/null 2>&1; then
+        if herdr agent send-keys "$(agent_ident "$role")" enter >/dev/null 2>&1; then
           note "  [着火] $role (${pane}) — 未 submit の貼り付けに enter を送った"
         else
           note "  ! $role (${pane}) — send-keys に失敗"
