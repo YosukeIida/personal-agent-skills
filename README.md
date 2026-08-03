@@ -42,7 +42,7 @@ gh skill install YosukeIida/personal-agent-skills commit --agent claude-code --s
 |---|---|
 | [akubun-writing](akubun-writing/SKILL.md) | 岩淵悦太郎編『悪文』の原則にもとづいて、日本語の文章を読者本位で診断・推敲・改稿する |
 | [browser-use](browser-use/SKILL.md) | Direct browser control via CDP for web interaction: automation, scraping, testing, screenshots, and site/app work |
-| [cc-launch-workspace](cc-launch-workspace/SKILL.md) | Launch Claude Code in a new cmux terminal workspace for a specified repository or path |
+| [cc-launch-cmux-workspace](cc-launch-cmux-workspace/SKILL.md) | Launch Claude Code in a new cmux terminal workspace for a specified repository or path |
 | [cmux](cmux/SKILL.md) | End-user control of cmux topology and routing (windows, workspaces, panes/surfaces, focus, moves, reorder, identify, trigger flash) |
 | [cmux-browser](cmux-browser/SKILL.md) | End-user browser automation with cmux |
 | [cmux-customization](cmux-customization/SKILL.md) | Customize cmux for an end user (actions, layouts, shortcuts, notifications, etc.) |

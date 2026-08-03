@@ -1,4 +1,0 @@
-interface:
-  display_name: "CC Launch Workspace"
-  short_description: "Launch Claude Code in a cmux workspace"
-  default_prompt: "Use $cc-launch-workspace to open a repository in a new cmux workspace and start Claude Code."
