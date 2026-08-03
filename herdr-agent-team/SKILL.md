@@ -175,21 +175,48 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
 **この問題は kind の選択に影響する。** 受け取り専用のロールを `codex` にすると着火の
 取りこぼしが起きない。逆に `claude` のロールは誰かが enter を送る前提で運用設計すること。
 
-## 宛先の受け取り方（`resident`）
+## 状態は2つに分かれている（持ち主が違う）
+
+| 状態 | 持ち主 | 場所 | 中身 |
+|---|---|---|---|
+| **pane 状態** | このスキル | `${HERDR_TEAM_CONFIG_DIR:-~/.config/herdr-agent-team}/<team>.panes.json` | role → pane_id / cwd / kind / 誰が作ったか。`down` / `doctor` / `ratio` が使う |
+| **配送トポロジー** | **intent-cli** | `intent-cli` が決める（`session-layer topology` が正本） | 誰にどう届けるか（`resident` / pane / reader） |
+
+**このスキルは配送トポロジーの JSON を組まない。** `session-layer topology record` に値を
+渡すだけで、形式を知らない。CLI が形を変えても追随できる。実際、CLI は
+`{"teams": {"<team>": {...}}}` というマルチチーム構造を書くが、それを知る必要がない。
+
+- `up` / `adopt` は pane 状態を書いたあと `topology record` をロールごとに呼ぶ。
+- `doctor` は形式の妥当性を自分で判定せず `topology validate` に聞く。
+- **intent-cli が無い環境ではトポロジーの記録をスキップする**（警告のみ）。このスキルは
+  herdr の配備だけで成立し、intent-cli は利用者の1人にすぎない。
+- CLI は食い違う記録を fail closed で拒否する。勝手に直さず operator に上げる。
+
+> **`topology` は host repo の cwd から実行する必要がある。** `.intent-cli` を持たない
+> ディレクトリから呼ぶと `missing-host-state` で落ちる。このスキルは任意の cwd から
+> 呼ばれるので、内部で config の `host_repo` に移って実行している（実測で踏んだ）。
+
+### 宛先の受け取り方（`resident`）
 
 ロールには2通りの受け取り方がある。`resident` で指定し、既定は `herdr`。
 
-| `resident` | 受け取り方 | mapping に記録されるもの |
+| `resident` | 受け取り方 | CLI に渡す値 |
 |---|---|---|
-| `herdr`（既定） | pane にプロンプトが送られる | `workspace_id` / `pane_id` |
-| `external` | **ファイルへの追記**で受け取る | `reader`（routing-root 相対パス） |
+| `herdr`（既定） | pane にプロンプトが送られる | `--workspace-id` / `--pane-id` / `--cwd` / `--kind` |
+| `external` | **ファイルへの追記**で受け取る | `--reader`（routing-root 相対パス）のみ |
 
 **`external` は上の submit 問題を受けない**（pane に送らないので enter が要らない）。
 人間が読むロール（設計・意思決定を担うロール）は `external` が向いている。
 `reader` は `init` がチーム名から実体化するので、既定値側に書く必要はない。
 
-`external` のロールも pane を持てる（このスキルは pane を管理し続ける）。
-mapping の `resident` は「**どう届けるか**」だけを表し、pane の有無とは独立している。
+`external` のロールも pane を持てる（このスキルは pane 状態として持ち続ける）。
+ただし **CLI に渡すのは `--reader` だけ**で、pane 情報は渡さない。混ぜると CLI が
+矛盾した記録として拒否する（実測で踏んだ）。
+
+> **pane 状態を失った場合は `up` ではなく `adopt`。** `up` は pane 状態に載っていない
+> ロールを「pane が無い」と見なして新しく作る。設定ディレクトリを移した・消した後に
+> `up` を打つと、生きている pane の隣に空の pane が生える（実測で踏んだ）。
+> 既存レイアウトを取り込むのは `adopt` の仕事。
 
 ## 幅を決めるときの基準
 

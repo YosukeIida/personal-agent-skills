@@ -28,8 +28,22 @@ intent-cli は、ワークフローの正本を「インストール済み CLI �
 | マッピング | role → workspace / pane / cwd / kind の記録と読み出し |
 | 生存確認 | pane を読んで agent の TUI がまだあるか、cwd と kind が一致しているか |
 | 着火 | 貼られたまま submit されずに止まっている pane に enter を送る（`nudge`） |
-| 宛先の受け取り方 | ロールを pane 宛（`resident: herdr`）と ファイル追記（`external` + `reader`）のどちらで記録するか |
+| pane 状態 | role → pane / cwd / kind / 誰が作ったか。自分の設定ディレクトリに持つ |
 | 撤収 | 自分が作った pane だけを閉じる |
+
+## 持たないもの（intent-cli が所有する state）
+
+**配送トポロジーの形式**は持たない。「どのロールにどう届けるか」は intent-cli の
+`session-layer topology` が正本で、このスキルは `record` に値を渡すだけである。
+JSON を自分で組まないので、CLI が形式を変えても追随できる。
+
+かつては `.intent-cli/role-pane-mapping.json` を直接書いていたが、これは越境だった。
+実測で分かったこと（2026-08）:
+
+- 手で組んだ形は `validate` を通ったが、CLI の正式な形（マルチチーム構造）とは違っていた
+- external ロールに pane 情報を混ぜていたため、`record` が矛盾した記録として拒否した
+
+CLI が canonical writer を用意した以上、**形式を知る責任は CLI に返す**のが正しい。
 
 `nudge` が境界内である理由: これは「止まっている pane を動かす」端末操作であり、
 **何を送るか**には一切関与しない。送る内容は常に enter のみで、タスクの内容・委譲の作法・

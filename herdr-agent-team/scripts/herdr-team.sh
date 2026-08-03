@@ -74,7 +74,10 @@ cfg_role_field() { jq -r --arg r "$1" --arg f "$2" '.roles[] | select(.role==$r)
 cfg_caller_role() { jq -r '.roles[] | select(.caller==true) | .role' "$CFG"; }
 cfg_launch_flags() { jq -r --arg r "$1" '.roles[] | select(.role==$r) | (.launch_flags // []) | join(" ")' "$CFG"; }
 
-mapping_path() { printf '%s/.intent-cli/role-pane-mapping.json' "$(cfg_host_repo)"; }
+# このスキルが所有する pane 状態。down / doctor / ratio が pane を特定するために使う。
+# 配送トポロジー（誰にどう届けるか）は持ち主が別で、intent-cli の
+# `session-layer topology` が正本（record_topology 参照）。
+panes_path() { printf '%s/%s.panes.json' "$CONFIG_DIR" "$TEAM"; }
 
 # role の model / effort / launch_flags を、その kind の実フラグに変換して
 # LAUNCH_ARGS 配列に入れる（`herdr agent start ... -- <ここ>` に渡す）。
@@ -138,7 +141,7 @@ pane_width() { layout_json | jq -r --arg p "$1" '.result.layout.panes[] | select
 
 # 既存 mapping からロールの pane を引く（無ければ空）
 mapped_pane() {
-  local mp; mp="$(mapping_path)"
+  local mp; mp="$(panes_path)"
   [ -f "$mp" ] || return 0
   jq -r --arg r "$1" '.roles[$r].pane_id // empty' "$mp" 2>/dev/null || true
 }
@@ -149,8 +152,11 @@ pane_exists() {
   pane_json | jq -e --arg p "$1" 'any(.result.panes[]; .pane_id==$p)' >/dev/null 2>&1
 }
 
-write_mapping() { # assoc: role=pane_id;created の行を stdin で受ける
-  local mp; mp="$(mapping_path)"
+# このスキルが所有する pane 状態を書き出す。role → pane / cwd / kind / 誰が作ったか。
+# 「誰にどう届けるか」（resident / reader）は書かない — それは配送トポロジーであり
+# 持ち主が別（record_topology）。ここに混ぜると同じ事実が2箇所に載る。
+write_panes_state() { # role|pane_id|created の行を stdin で受ける
+  local mp; mp="$(panes_path)"
   mkdir -p "$(dirname "$mp")"
   local tmp; tmp="$(mktemp)"
   {
@@ -161,37 +167,66 @@ write_mapping() { # assoc: role=pane_id;created の行を stdin で受ける
       [ -n "$role" ] || continue
       [ $first -eq 1 ] || printf ',\n'
       first=0
-      local resident reader
-      resident="$(cfg_role_field "$role" resident)"; : "${resident:=herdr}"
-      if [ "$resident" = external ]; then
-        # herdr の外で受け取るロール。pane への送信ではなく events ファイルへの
-        # 追記で届くので、routing-root 相対の reader を記録する。pane_id 以降は
-        # このスキル自身が pane を管理するために残す（読み手は resident を見る）。
-        reader="$(cfg_role_field "$role" reader)"
-        : "${reader:=.intent-cli/events/${TEAM}.jsonl}"
-        printf '    %s: { "resident": "external", "reader": %s, "workspace_id": %s, "pane_id": %s, "cwd": %s, "kind": %s, "created_by_skill": %s }' \
-          "$(jq -Rn --arg v "$role" '$v')" \
-          "$(jq -Rn --arg v "$reader" '$v')" \
-          "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')" \
-          "$(jq -Rn --arg v "$pane" '$v')" \
-          "$(jq -Rn --arg v "$(cfg_role_field "$role" cwd)" '$v')" \
-          "$(jq -Rn --arg v "$(cfg_role_field "$role" kind)" '$v')" \
-          "$created"
-      else
-        printf '    %s: { "resident": "herdr", "workspace_id": %s, "pane_id": %s, "cwd": %s, "kind": %s, "created_by_skill": %s }' \
-          "$(jq -Rn --arg v "$role" '$v')" \
-          "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')" \
-          "$(jq -Rn --arg v "$pane" '$v')" \
-          "$(jq -Rn --arg v "$(cfg_role_field "$role" cwd)" '$v')" \
-          "$(jq -Rn --arg v "$(cfg_role_field "$role" kind)" '$v')" \
-          "$created"
-      fi
+      printf '    %s: { "workspace_id": %s, "pane_id": %s, "cwd": %s, "kind": %s, "created_by_skill": %s }' \
+        "$(jq -Rn --arg v "$role" '$v')" \
+        "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')" \
+        "$(jq -Rn --arg v "$pane" '$v')" \
+        "$(jq -Rn --arg v "$(cfg_role_field "$role" cwd)" '$v')" \
+        "$(jq -Rn --arg v "$(cfg_role_field "$role" kind)" '$v')" \
+        "$created"
     done
     printf '\n  }\n}\n'
   } >"$tmp"
-  jq -e . "$tmp" >/dev/null || { rm -f "$tmp"; die "mapping の生成に失敗（JSON 不正）"; }
+  jq -e . "$tmp" >/dev/null || { rm -f "$tmp"; die "pane 状態の生成に失敗（JSON 不正）"; }
   mv "$tmp" "$mp"
-  note "mapping を書き出した: $mp"
+  note "pane 状態を書き出した: $mp"
+}
+
+# intent-cli の topology コマンドは `.intent-cli` を持つ cwd（host repo）から実行しないと
+# `missing-host-state` で落ちる。このスキルは任意の cwd から呼ばれる（caller pane が
+# host repo に居るとは限らない）ので、config の host_repo に移って実行する。
+topology_cmd() {
+  ( cd "$(cfg_host_repo)" 2>/dev/null || exit 1
+    intent-cli session-layer topology "$@" 2>&1 )
+}
+
+# 配送トポロジーを記録する。**形式の正本は intent-cli 側**（`session-layer topology`）で、
+# このスキルは値を渡すだけ。自分で JSON を組まないので、CLI が形を変えても追随できる。
+# intent-cli が無い環境ではスキップする（このスキルは herdr の配備だけで成立する）。
+record_topology() {
+  if ! command -v intent-cli >/dev/null 2>&1; then
+    note "intent-cli が無いので配送トポロジーの記録はスキップ（pane 状態は保存済み）"
+    return 0
+  fi
+  local role resident reader pane cwd kind out rc=0
+  for role in $(cfg_roles); do
+    resident="$(cfg_role_field "$role" resident)"; : "${resident:=herdr}"
+    if [ "$resident" = external ]; then
+      reader="$(cfg_role_field "$role" reader)"
+      : "${reader:=.intent-cli/events/${TEAM}.jsonl}"
+      out="$(topology_cmd record --team "$TEAM" --role "$role" \
+               --resident external --reader "$reader" --write --format json)" || rc=1
+    else
+      pane="$(mapped_pane "$role")"
+      if [ -z "$pane" ] || [ "$pane" = "-" ]; then continue; fi
+      cwd="$(cfg_role_field "$role" cwd)"
+      kind="$(cfg_role_field "$role" kind)"
+      out="$(topology_cmd record --team "$TEAM" --role "$role" \
+               --resident herdr --workspace-id "$HERDR_WORKSPACE_ID" --pane-id "$pane" \
+               --cwd "$cwd" --kind "$kind" --write --format json)" || rc=1
+    fi
+    # CLI は食い違う記録を fail closed で拒否する。勝手に直さず operator に上げる。
+    if printf '%s' "$out" | jq -e '.conflict == true' >/dev/null 2>&1; then
+      note "  ! ${role}: 既存の記録と食い違うため intent-cli が拒否した"
+      note "    intent-cli session-layer topology show --team ${TEAM} で現在の記録を確認すること"
+      rc=1
+    fi
+  done
+  if [ "$rc" -eq 0 ]; then
+    note "配送トポロジーを intent-cli に記録した（正本は CLI 側）"
+  else
+    note "! 配送トポロジーの記録に問題があった。上の指摘を解消すること"
+  fi
 }
 
 # ---------- サブコマンド: init -----------------------------------------------
@@ -281,7 +316,7 @@ cmd_init() {
 
 cmd_status() {
   load_config
-  local mp; mp="$(mapping_path)"
+  local mp; mp="$(panes_path)"
   note "team: $TEAM   workspace: $HERDR_WORKSPACE_ID   area: $(area_width)桁"
   note "mapping: $([ -f "$mp" ] && echo "$mp" || echo '(まだ無い)')"
   printf '\n%-16s %-10s %-8s %-9s %-6s %s\n' ROLE PANE KIND STATUS WIDTH CWD
@@ -338,8 +373,9 @@ cmd_adopt() {
     lines+=("${roles[$i]}|${panes[$i]}|false")
   done
 
-  if [ "$DRY_RUN" = 1 ]; then note "(dry-run) mapping は書かない"; return 0; fi
-  printf '%s\n' "${lines[@]}" | write_mapping
+  if [ "$DRY_RUN" = 1 ]; then note "(dry-run) pane 状態とトポロジーは書かない"; return 0; fi
+  printf '%s\n' "${lines[@]}" | write_panes_state
+  record_topology
   note ""
   cmd_status
 }
@@ -458,7 +494,7 @@ cmd_up() {
     else
       pane="$(mapped_pane "$role")"
       if pane_exists "$pane"; then
-        created="$(jq -r --arg r "$role" '.roles[$r].created_by_skill // false' "$(mapping_path)")"
+        created="$(jq -r --arg r "$role" '.roles[$r].created_by_skill // false' "$(panes_path)")"
         note "$role: 既存 pane $pane を再利用"
       else
         [ -d "$cwd" ] || die "$role の cwd が存在しない: $cwd"
@@ -500,11 +536,12 @@ cmd_up() {
   done
 
   if [ "$DRY_RUN" = 1 ]; then
-    note "(dry-run) mapping の書き出しと agent 起動はしない"
+    note "(dry-run) pane 状態・トポロジーの記録と agent 起動はしない"
     return 0
   fi
 
-  printf '%s\n' "${lines[@]}" | write_mapping
+  printf '%s\n' "${lines[@]}" | write_panes_state
+  record_topology
   cmd_ratio
 
   # agent 起動（caller 以外、かつ agent が居ない pane だけ）
@@ -719,6 +756,24 @@ cmd_doctor() {
       fi
     fi
   done
+
+  # 配送トポロジーの妥当性は判定しない — 形式の正本が intent-cli 側にあるので、
+  # CLI の validate に聞く。ここで独自の判定を持つと二重管理に戻る。
+  if command -v intent-cli >/dev/null 2>&1; then
+    local tv
+    tv="$(topology_cmd validate --team "$TEAM" --format json || true)"
+    if [ -n "$tv" ] && printf '%s' "$tv" | jq -e 'has("valid")' >/dev/null 2>&1; then
+      if printf '%s' "$tv" | jq -e '.valid == true' >/dev/null 2>&1; then
+        note "  [ok] 配送トポロジー — intent-cli の validate を通過"
+      else
+        note "  [topology不正] $(printf '%s' "$tv" | jq -r '.summary // "-"')"
+        note "                 intent-cli session-layer topology show --team ${TEAM} で確認し、"
+        note "                 up を再実行して記録し直すこと"
+        problems=$((problems+1))
+      fi
+    fi
+  fi
+
   note ""
   if [ "$problems" -eq 0 ]; then
     note "doctor: 問題なし。READY の正式な判定基準（settle delay / ping-ack）は"
@@ -775,7 +830,7 @@ cmd_nudge() {
 
 cmd_down() {
   load_config
-  local mp; mp="$(mapping_path)"
+  local mp; mp="$(panes_path)"
   [ -f "$mp" ] || die "mapping が無いので、何を作ったか判別できない。手動で確認すること"
   local caller_role; caller_role="$(cfg_caller_role)"
   local role pane created
