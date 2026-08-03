@@ -26,6 +26,10 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
 
 - herdr 内で動いていること（`HERDR_ENV=1`）。外からは操作しない。
 - `jq` が必要。
+- ロールごとの cwd が用意されていること。**同一 repo に metadata ブランチを持つ構成なら、
+  clone ではなく worktree で用意できる**（新規 clone を増やさずに済む）。レイアウト規約・
+  `detached` が必須な理由・同一ブランチ衝突の回避・配備前に確認することは
+  [references/worktree-layout.md](references/worktree-layout.md)。
 
 ## Workflow
 
@@ -65,8 +69,12 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
    ```bash
    scripts/herdr-team.sh swap  --team dotfiles-dev --role implementation --kind codex
    scripts/herdr-team.sh ratio --team dotfiles-dev      # ウィンドウ/モニタ変更後に幅を再適用
+   scripts/herdr-team.sh nudge --team dotfiles-dev      # 貼られたまま止まった pane に enter
    scripts/herdr-team.sh down  --team dotfiles-dev      # 自分が作った pane だけ閉じる
    ```
+
+6. 外部から pane に送られたプロンプトが着火していないときは `nudge`。
+   詳細は下の「配送が submit されないことがある」を読むこと。
 
 結果は role / pane / kind / 状態 / cwd を簡潔に報告する。pane id を推測して報告しない
 （必ずスクリプトの出力を使う）。
@@ -87,6 +95,11 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
 `--host-repo` / `--impl-repo` / `--review-repo` の実パスに解決する。
 既定は intent-cli guide の割り当てに合わせてある（design と orchestrator は host、
 implementation は実装リポジトリ、review は独立した review の cwd）。
+
+**`--review-repo` の既定は `--impl-repo` なので注意。** review は metadata を読む側なので、
+metadata を持たない実装用ディレクトリに置くと成立しない。worktree 構成では
+`--review-repo` に host と同じパスを明示する（理由と可否の条件は
+[references/worktree-layout.md](references/worktree-layout.md)）。
 
 生成される設定の形:
 
@@ -136,6 +149,48 @@ implementation は実装リポジトリ、review は独立した review の cwd�
 - `ratio` はこのモニタ・このフォントサイズ前提の値。変わったら `ratio` サブコマンドで
   測り直して再適用する。
 
+## 配送が submit されないことがある（実測 2026-08）
+
+外部から pane にプロンプトを送る仕組みは、**入力欄に貼るところまでで submit を保証しない**。
+実測では次のように分かれた。
+
+| pane の kind | 挙動 |
+|---|---|
+| `claude` | 貼られたまま **submit されず不着火**（2回再現）。送信側の戻り値は成功を返す |
+| `codex` | 正常に着火した |
+
+**pane は `idle` に見えるので生存確認では気づけない。** `doctor` も「agent は生きている」と
+報告する。着火していないことは pane を読んで `[Pasted text …]` が入力欄に残っているかで判る。
+
+対処は3層で、上から順に試す。
+
+1. **送信側が送信直後に enter を送る** — 送った側がそのまま
+   `herdr agent send-keys <role> enter` を打つのが最も確実。取りこぼしが出ない。
+2. **`nudge` で拾う** — 取りこぼしたものを後から拾う。全ロールを走査して、貼られたまま
+   止まっている pane にだけ enter を送る（`--role` で1つに絞れる）。
+3. **配送する側の実装に報告する** — herdr には `agent prompt --wait` と
+   `agent_prompt_stalled` があるので、submit 確認は呼び出し側で取れる。
+   確認を持たない実装は想定漏れとして報告するのが筋。
+
+**この問題は kind の選択に影響する。** 受け取り専用のロールを `codex` にすると着火の
+取りこぼしが起きない。逆に `claude` のロールは誰かが enter を送る前提で運用設計すること。
+
+## 宛先の受け取り方（`resident`）
+
+ロールには2通りの受け取り方がある。`resident` で指定し、既定は `herdr`。
+
+| `resident` | 受け取り方 | mapping に記録されるもの |
+|---|---|---|
+| `herdr`（既定） | pane にプロンプトが送られる | `workspace_id` / `pane_id` |
+| `external` | **ファイルへの追記**で受け取る | `reader`（routing-root 相対パス） |
+
+**`external` は上の submit 問題を受けない**（pane に送らないので enter が要らない）。
+人間が読むロール（設計・意思決定を担うロール）は `external` が向いている。
+`reader` は `init` がチーム名から実体化するので、既定値側に書く必要はない。
+
+`external` のロールも pane を持てる（このスキルは pane を管理し続ける）。
+mapping の `resident` は「**どう届けるか**」だけを表し、pane の有無とは独立している。
+
 ## 幅を決めるときの基準
 
 **worker pane を細くしすぎない。実用下限はおよそ 48 桁。** エージェントの承認・信頼・選択
@@ -175,9 +230,16 @@ implementation は実装リポジトリ、review は独立した review の cwd�
 - `ratio` — 実測 → 目標との差分を境界ごとに resize して収束させる。
   `pane resize --direction` は**指定した pane がその方向に伸びて広くなる**（縮まない）ので、
   スクリプトが符号を扱う。
+- `nudge` — 貼られたまま submit されずに止まっている pane に enter を送る。`--role` で
+  1ロールに絞れる。判定は pane を読んで `[Pasted text …]` が入力欄に残っているかで行い、
+  残っていない pane には何も送らない（空 enter を撒かない）。何を送るかには関与しない。
 - `doctor` — `agent-absent`（agent が居るべき pane にシェルプロンプト = 落ちている）、
-  cwd 不一致、kind 不一致、**model / effort 不一致**、mapping が実機と食い違っている、
-  承認待ちで停止、を検出する。検出しても自動修復しない（報告のみ）。
+  cwd 不一致、kind 不一致、**model / effort 不一致**、**logical role 名が付いていない**、
+  mapping が実機と食い違っている、承認待ちで停止、を検出する。検出しても自動修復しない（報告のみ）。
+  logical role 名は `herdr agent start <role>` が付けるもので、pane で直接 `claude` /
+  `codex` と打って起動した agent には付かない。**名前が無い agent は宛先解決から漏れ、
+  pane が生きていても配送されない**（fail closed。実測で踏んだ）。修復は
+  `herdr agent rename <pane> <role>`。
   model / effort は pane の表示から読んで config と突き合わせる（agent が自分の設定を表示するため）。
   表記の違い（config `opus` / 表示 `Opus 5`）を吸収するため大小無視の部分一致で判定する。
 - `down` — `created_by_skill: true` の pane だけ閉じる。caller pane は絶対に閉じない。

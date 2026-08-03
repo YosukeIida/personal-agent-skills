@@ -161,13 +161,31 @@ write_mapping() { # assoc: role=pane_id;created の行を stdin で受ける
       [ -n "$role" ] || continue
       [ $first -eq 1 ] || printf ',\n'
       first=0
-      printf '    %s: { "resident": "herdr", "workspace_id": %s, "pane_id": %s, "cwd": %s, "kind": %s, "created_by_skill": %s }' \
-        "$(jq -Rn --arg v "$role" '$v')" \
-        "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')" \
-        "$(jq -Rn --arg v "$pane" '$v')" \
-        "$(jq -Rn --arg v "$(cfg_role_field "$role" cwd)" '$v')" \
-        "$(jq -Rn --arg v "$(cfg_role_field "$role" kind)" '$v')" \
-        "$created"
+      local resident reader
+      resident="$(cfg_role_field "$role" resident)"; : "${resident:=herdr}"
+      if [ "$resident" = external ]; then
+        # herdr の外で受け取るロール。pane への送信ではなく events ファイルへの
+        # 追記で届くので、routing-root 相対の reader を記録する。pane_id 以降は
+        # このスキル自身が pane を管理するために残す（読み手は resident を見る）。
+        reader="$(cfg_role_field "$role" reader)"
+        : "${reader:=.intent-cli/events/${TEAM}.jsonl}"
+        printf '    %s: { "resident": "external", "reader": %s, "workspace_id": %s, "pane_id": %s, "cwd": %s, "kind": %s, "created_by_skill": %s }' \
+          "$(jq -Rn --arg v "$role" '$v')" \
+          "$(jq -Rn --arg v "$reader" '$v')" \
+          "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')" \
+          "$(jq -Rn --arg v "$pane" '$v')" \
+          "$(jq -Rn --arg v "$(cfg_role_field "$role" cwd)" '$v')" \
+          "$(jq -Rn --arg v "$(cfg_role_field "$role" kind)" '$v')" \
+          "$created"
+      else
+        printf '    %s: { "resident": "herdr", "workspace_id": %s, "pane_id": %s, "cwd": %s, "kind": %s, "created_by_skill": %s }' \
+          "$(jq -Rn --arg v "$role" '$v')" \
+          "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')" \
+          "$(jq -Rn --arg v "$pane" '$v')" \
+          "$(jq -Rn --arg v "$(cfg_role_field "$role" cwd)" '$v')" \
+          "$(jq -Rn --arg v "$(cfg_role_field "$role" kind)" '$v')" \
+          "$created"
+      fi
     done
     printf '\n  }\n}\n'
   } >"$tmp"
@@ -233,6 +251,12 @@ cmd_init() {
          + (($models[$r.role] // $r.model)  | if . then {model: .}  else {} end)
          + (($efforts[$r.role] // $r.effort) | if . then {effort: .} else {} end)
          + (if $r.launch_flags then {launch_flags: $r.launch_flags} else {} end)
+         # resident: external のロールは pane 宛の送信ではなく events ファイルへの
+         # 追記で受け取る。reader はチーム名から決まるのでここで実体化する。
+         + (if $r.resident then {resident: $r.resident} else {} end)
+         + (if $r.resident == "external"
+              then {reader: ($r.reader // (".intent-cli/events/" + $team + ".jsonl"))}
+              else {} end)
        ]
      }' "$DEFAULTS_FILE" >"$tmp"
 
@@ -424,6 +448,13 @@ cmd_up() {
     if [ "$role" = "$caller_role" ]; then
       pane="$HERDR_PANE_ID"; created=false
       note "$role: caller pane $pane を割り当て（agent は起動しない）"
+      # agent を起動しないロールには logical role 名が付かない。名前が無い agent は
+      # notify の宛先解決から漏れる（「logical role が見つからない」で fail closed）ため、
+      # rename だけは caller にも当てる。
+      if [ "$DRY_RUN" != 1 ]; then
+        herdr agent rename "$pane" "$role" >/dev/null 2>&1 \
+          || note "  ! caller pane の rename に失敗（notify の宛先解決から漏れる可能性）"
+      fi
     else
       pane="$(mapped_pane "$role")"
       if pane_exists "$pane"; then
@@ -602,6 +633,18 @@ cmd_doctor() {
     status="$(pane_field "$pane" agent_status)"
     cwd_live="$(pane_field "$pane" cwd)"
 
+    # 宛先解決は agent の logical role 名で行われる。名前が付いていない agent は
+    # pane が生きていても宛先候補から漏れ、fail closed で配送されない（実測で踏んだ）。
+    # 名前を付けるのは `herdr agent start <role>` なので、pane で直接 `claude` /
+    # `codex` と打って起動した agent には付いていない。
+    local agent_name
+    agent_name="$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)"
+    if [ "$agent_name" != "$role" ]; then
+      note "  [role名なし] $role ($pane) — agent の logical role 名が「${agent_name:-未設定}」"
+      note "               この状態では宛先解決から漏れる。修復: herdr agent rename $pane $role"
+      problems=$((problems+1))
+    fi
+
     if [ "$role" = "$caller_role" ]; then
       # caller pane は起動し直さないと cwd を変えられないので、指摘ではなく注意に留める
       if [ "$cwd_live" != "$cwd_cfg" ]; then
@@ -683,6 +726,49 @@ cmd_doctor() {
   fi
 }
 
+# ---------- サブコマンド: nudge ----------------------------------------------
+
+# 外部から pane に送られたプロンプトが、入力欄に貼られたまま submit されずに
+# 止まることがある（実測 2026-08: claude kind の pane で再現。codex kind は正常に着火した）。
+# pane は idle に見えるので生存確認では気づけない。貼られたままの pane に enter を送る。
+#
+# これは「止まっている pane を動かす」機械的操作であり、何を送るかには関与しない。
+cmd_nudge() {
+  load_config
+  local role pane status disp hit=0
+  note "nudge: team=$TEAM"
+  for role in $(cfg_roles); do
+    if [ -n "$SWAP_ROLE" ] && [ "$role" != "$SWAP_ROLE" ]; then continue; fi
+    pane="$(mapped_pane "$role")"
+    if ! pane_exists "$pane"; then
+      note "  [skip] $role — pane が無い"; continue
+    fi
+    assert_same_workspace "$pane" "$HERDR_WORKSPACE_ID"
+    status="$(pane_field "$pane" agent_status)"
+    disp=""
+    local s2
+    for s2 in visible detection recent-unwrapped; do
+      disp="$(herdr pane read "$pane" --source "$s2" --lines 15 2>/dev/null || true)"
+      [ -n "$disp" ] && break
+    done
+    if printf '%s' "$disp" | grep -q 'Pasted text'; then
+      if [ "$DRY_RUN" = 1 ]; then
+        note "  would: herdr agent send-keys $role enter   （${pane} に未 submit の貼り付けがある）"
+      else
+        if herdr agent send-keys "$role" enter >/dev/null 2>&1; then
+          note "  [着火] $role (${pane}) — 未 submit の貼り付けに enter を送った"
+        else
+          note "  ! $role (${pane}) — send-keys に失敗"
+        fi
+      fi
+      hit=$((hit+1))
+    else
+      note "  [ok] $role (${pane}) — 未 submit の貼り付けは見当たらない（status=${status}）"
+    fi
+  done
+  [ "$hit" -gt 0 ] || note "着火対象なし"
+}
+
 # ---------- サブコマンド: down -----------------------------------------------
 
 cmd_down() {
@@ -720,6 +806,7 @@ USAGE='使い方:
   herdr-team.sh swap   --team <name> --role <role> --kind <kind>
   herdr-team.sh ratio  --team <name>
   herdr-team.sh doctor --team <name>
+  herdr-team.sh nudge  --team <name> [--role <role>]   # 貼られたまま止まった pane に enter
   herdr-team.sh down   --team <name>
 共通: --dry-run   swap のみ: --force（idle な agent を終了させて入れ替える）
 設定の場所: ${HERDR_TEAM_CONFIG_DIR:-~/.config/herdr-agent-team}/<team>.json'
@@ -761,6 +848,7 @@ case "$SUB" in
   swap)   cmd_swap ;;
   ratio)  cmd_ratio ;;
   doctor) cmd_doctor ;;
+  nudge)  cmd_nudge ;;
   down)   cmd_down ;;
   *) die "不明なサブコマンド: $SUB" ;;
 esac

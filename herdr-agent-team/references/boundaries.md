@@ -27,7 +27,14 @@ intent-cli は、ワークフローの正本を「インストール済み CLI �
 | agent の起動 | どの pane でどの kind（claude / codex / …）を起動するか、起動フラグ |
 | マッピング | role → workspace / pane / cwd / kind の記録と読み出し |
 | 生存確認 | pane を読んで agent の TUI がまだあるか、cwd と kind が一致しているか |
+| 着火 | 貼られたまま submit されずに止まっている pane に enter を送る（`nudge`） |
+| 宛先の受け取り方 | ロールを pane 宛（`resident: herdr`）と ファイル追記（`external` + `reader`）のどちらで記録するか |
 | 撤収 | 自分が作った pane だけを閉じる |
+
+`nudge` が境界内である理由: これは「止まっている pane を動かす」端末操作であり、
+**何を送るか**には一切関与しない。送る内容は常に enter のみで、タスクの内容・委譲の作法・
+完了判定には触れない。逆に「どのロールに何を送るか」を決める機能を足したくなったら、
+それは境界の外側なので `intent-cli guide ...` に取りに行かせること。
 
 ## 持たないもの（intent-cli guide が正本）
 
