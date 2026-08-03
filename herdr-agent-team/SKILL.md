@@ -278,5 +278,32 @@ intent-cli guide に記録されている）。`doctor` は pane を実際に読
 まだそこにあるかを確認する。シェルプロンプトが見えたら、どれだけ直前に起動成功して
 いても落ちている。
 
+### 生存していても「配送先になれない」ことがある
+
+**起動直後の agent は、検出されていても外部からの配送の宛先候補にならない。**
+`running` が false のままで、**1回プロンプトを受けるまで**宛先解決から漏れる（実測 2026-08）。
+cwd も kind も一致し生存確認も通るので、ping を送るまで見分けられない。
+
+`up` は agent を起動したあと **READY ping** を送り、`working` への遷移を確認してから
+`[ready]` と報告する。遷移しなければ `[not-ready]` として原因の手がかりを出す。
+`doctor` も `interactive_ready` を見て同じ状態を検出する。
+
+これは公式の READY 判定（`intent-cli guide orchestrator-thread` の G556）が挙げる4条件
+（agent 検出 / cwd 一致 / kind 一致 / **ping して ack を確認**）のうち、最後の1つに対応する。
+
+### 利用上限は「model 不一致」として現れる
+
+**利用上限に達した agent は READY ping を通してしまう。** 指定した model が使えず
+fallback model で起動し、ping には応答するためである（実測 2026-08: `gpt-5.6-sol high`
+を指定した codex が `gpt-5.6-luna medium` で動いていた）。
+
+このとき唯一の手がかりが `doctor` の **`[model不一致?]`** になる。`doctor` は pane に
+利用上限の表示があるかを併せて見て、その場合は「別アカウントに切り替えてから起動し直す」
+よう案内する。**pane を作り直すだけでは直らない** — シェルの環境（アカウント切替）から
+変える必要がある。
+
+逆に言えば、`[model不一致?]` が出たら「config を変えたのに反映されていない」だけでなく
+「上限に当たっている」可能性も疑うこと。
+
 正本の READY 判定基準（settle delay の長さ、ping/ack の要否など）は
 `intent-cli guide orchestrator-thread` の G556 節を参照すること。ここには書き写さない。

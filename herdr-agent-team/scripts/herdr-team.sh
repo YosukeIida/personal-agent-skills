@@ -566,6 +566,7 @@ cmd_up() {
 
   # agent 起動（caller 以外、かつ agent が居ない pane だけ）
   local live flags
+  local -a launched=()
   for role in $(cfg_roles); do
     [ "$role" = "$caller_role" ] && continue
     pane="$(mapped_pane "$role")"
@@ -581,16 +582,93 @@ cmd_up() {
     local ident; ident="$(agent_ident "$role")"
     note "$role: herdr agent start $ident --kind $kind --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
     if [ "${#LAUNCH_ARGS[@]}" -gt 0 ]; then
-      herdr agent start "$ident" --kind "$kind" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null \
-        || note "  ! 起動に失敗（doctor で確認すること）"
+      if herdr agent start "$ident" --kind "$kind" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null; then
+        launched+=("$role")
+      else
+        note "  ! 起動に失敗（doctor で確認すること）"
+      fi
     else
-      herdr agent start "$ident" --kind "$kind" --pane "$pane" >/dev/null \
-        || note "  ! 起動に失敗（doctor で確認すること）"
+      if herdr agent start "$ident" --kind "$kind" --pane "$pane" >/dev/null; then
+        launched+=("$role")
+      else
+        note "  ! 起動に失敗（doctor で確認すること）"
+      fi
     fi
   done
 
+  # 起動したロールだけ READY 判定を通す。起動報告は生存の証明ではないうえに、
+  # 起動直後の agent は「検出はされるが宛先候補になれない」状態を取りうる（下記参照）。
+  if [ "${#launched[@]}" -gt 0 ]; then
+    note ""
+    note "READY 判定（ping/ack）:"
+    local r
+    for r in "${launched[@]}"; do ready_ping "$r" || true; done
+  fi
+
   note ""
   cmd_doctor
+}
+
+# ---------- READY 判定（ping/ack） -------------------------------------------
+
+# 起動直後の agent は「herdr には検出されるが、外部からの配送の宛先候補になれない」
+# 状態を取りうる（実測 2026-08: agent start 直後は running=false のままで、1回
+# prompt を受けるまで宛先解決から漏れる）。cwd も kind も一致していて生存確認も
+# 通るので、ping を送るまでこの状態を見分けられない。
+#
+# 送るのは短い ping ひとつだけで、作業内容には関与しない。
+READY_PING_TEXT="READY 確認: 何も変更せず、稼働していることを1行だけ返してください。"
+
+ready_ping() {
+  local role="$1" ident pane
+  ident="$(agent_ident "$role")"
+  pane="$(mapped_pane "$role")"
+
+  if ! herdr agent prompt "$ident" "$READY_PING_TEXT" >/dev/null 2>&1; then
+    note "  [not-ready] ${role} — ping を送出できなかった（agent 名 ${ident} が解決できない）"
+    ready_ping_hint "$pane"
+    return 1
+  fi
+
+  # prompt が実際に届けば working に入る。入らないなら届いていない。
+  if ! herdr agent wait "$ident" --until working --timeout 20000 >/dev/null 2>&1; then
+    note "  [not-ready] ${role} — ping を送ったが working に遷移しない"
+    note "              この状態では外部からの配送が届かない。原因を切り分けること:"
+    ready_ping_hint "$pane"
+    return 1
+  fi
+
+  # 応答して settled に戻るところまで見る（タイムアウトは失敗ではない）
+  if herdr agent wait "$ident" --until idle --until "done" --until blocked --timeout 180000 >/dev/null 2>&1; then
+    note "  [ready] ${role} — ping/ack を確認"
+  else
+    note "  [注意] ${role} — ping は届いたが応答が時間内に settled しなかった（応答中の可能性）"
+  fi
+  return 0
+}
+
+# not-ready のときに pane から原因の手がかりを拾う。
+# 実測（2026-08）: 利用上限に達した agent は最初の turn が失敗するため READY が
+# 確立せず、pane 幅や pane の破損に見えるが実体はアカウントの問題だった。
+ready_ping_hint() {
+  local pane="${1:-}" disp s
+  [ -n "$pane" ] || return 0
+  disp=""
+  for s in visible detection recent-unwrapped; do
+    disp="$(herdr pane read "$pane" --source "$s" --lines 25 2>/dev/null || true)"
+    [ -n "$disp" ] && break
+  done
+  [ -n "$disp" ] || { note "              → pane を読めなかった"; return 0; }
+
+  if printf '%s' "$disp" | grep -qiE 'usage limit|rate limit|try again at|quota|purchase more credits'; then
+    note "              → pane に利用上限の表示がある。**agent の故障ではなくアカウントの問題**。"
+    note "                 別アカウントに切り替えてから起動し直すこと（pane を作り直すだけでは直らない）"
+  elif printf '%s' "$disp" | grep -qiE 'not initialized|startup interrupted'; then
+    note "              → 起動時の初期化に失敗した表示がある。pane を読んで内容を確認すること"
+  else
+    note "              → pane の表示に既知の兆候は無い。手で pane を読むこと:"
+    note "                 herdr pane read ${pane} --source visible"
+  fi
 }
 
 # ---------- サブコマンド: swap -----------------------------------------------
@@ -732,6 +810,20 @@ cmd_doctor() {
       [ "$kind_live" = "$kind_cfg" ] || {
         note "  [kind不一致] $role ($pane) — 実機=$kind_live / config=$kind_cfg"; problems=$((problems+1)); }
 
+      # 「検出はされるが宛先候補になれない」状態を検出する。agent start 直後は
+      # interactive_ready が確立しておらず、cwd も kind も一致していて生存確認も
+      # 通るのに外部からの配送が届かない（実測 2026-08 で3時間これに費やした）。
+      local iready
+      iready="$(herdr agent get "$(agent_ident "$role")" 2>/dev/null \
+                 | jq -r '.result.agent.interactive_ready // empty' 2>/dev/null || true)"
+      if [ "$iready" != true ]; then
+        note "  [not-ready] $role ($pane) — interactive_ready が確立していない（実機=${iready:-null}）"
+        note "              agent は居るが外部からの配送は届かない。ping を1回通せば確立する:"
+        note "              herdr agent prompt $(agent_ident "$role") \"READY 確認\""
+        note "              ping を送っても working にならないなら pane を読むこと（利用上限の可能性）"
+        problems=$((problems+1))
+      fi
+
       # model / effort の乖離を検出する。
       # up は稼働中の agent を起動し直さないので、config を変えても既存 agent には
       # 反映されない。ここで検出しないと「設定したのに効いていない」に気づけない（実測で踏んだ）。
@@ -750,8 +842,18 @@ cmd_doctor() {
           # model 名は表記が異なる（config: opus / 表示: "Opus 5"）ので大小無視の部分一致で見る
           if [ -n "$want_model" ] && ! printf '%s' "$disp" | grep -qiF "$want_model"; then
             note "  [model不一致?] $role ($pane) — config=$want_model が pane 表示に見当たらない"
-            note "                 起動後に config を変えた場合は反映されない。swap で入れ替えること:"
-            note "                 herdr-team.sh swap --team $TEAM --role $role --kind $kind_cfg --force"
+            # 利用上限に達した agent は指定 model が使えず fallback model で起動する。
+            # READY ping は通ってしまう（fallback でも応答するため）ので、この不一致が
+            # 上限に気づく唯一の手がかりになる（実測 2026-08: codex が
+            # gpt-5.6-sol high の指定で gpt-5.6-luna medium で動いていた）。
+            if printf '%s' "$disp" | grep -qiE 'usage limit|rate limit|try again at|purchase more credits'; then
+              note "                 → pane に**利用上限**の表示がある。指定 model が使えず fallback で"
+              note "                    起動している。別アカウントに切り替えてから起動し直すこと"
+              note "                    （pane を作り直すだけでは直らない。シェルの環境から変える）"
+            else
+              note "                 起動後に config を変えた場合は反映されない。swap で入れ替えること:"
+              note "                 herdr-team.sh swap --team $TEAM --role $role --kind $kind_cfg --force"
+            fi
             problems=$((problems+1))
           fi
           if [ -n "$want_effort" ] && ! printf '%s' "$disp" | grep -qiF "$want_effort"; then
