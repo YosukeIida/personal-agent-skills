@@ -156,7 +156,7 @@ write_mapping() { # assoc: role=pane_id;created の行を stdin で受ける
   {
     printf '{\n  "team": %s,\n  "workspace_id": %s,\n  "roles": {\n' \
       "$(jq -Rn --arg v "$TEAM" '$v')" "$(jq -Rn --arg v "$HERDR_WORKSPACE_ID" '$v')"
-    local first=1 line role pane created
+    local first=1 role pane created
     while IFS='|' read -r role pane created; do
       [ -n "$role" ] || continue
       [ $first -eq 1 ] || printf ',\n'
@@ -558,7 +558,9 @@ cmd_swap() {
   完了を待つか、その pane で対話的に停止させること"
     fi
     if [ "$FORCE" != 1 ]; then
-      die "$pane で $live が稼働中（status=$status）。既定では入れ替えない。
+      # 全角文字の直後の $var は変数名に取り込まれる（`$status）` → `status）` で
+      # unbound variable。実測で確認）。全角が続く箇所では必ず ${var} で囲む。
+      die "${pane} で ${live} が稼働中（status=${status}）。既定では入れ替えない。
   作業が無いことを確認済みなら --force を付けること。
   あるいはその pane で対話的に終了させてから再実行する（graceful drop が先）"
     fi
