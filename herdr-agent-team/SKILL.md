@@ -29,11 +29,16 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
 
 ## Workflow
 
-1. 対象チームの config を確認する。無ければ既存をコピーして作る。
+1. 対象チームの設定を作る（初回のみ）。**リポジトリ非依存**で、どのリポジトリでも同じ手順。
 
    ```bash
-   ls config/                      # 既存のチーム定義
-   cat config/dotfiles-dev.json
+   # cwd が git リポジトリなら --host-repo は省略できる（推定される）
+   scripts/herdr-team.sh init --team <name> --dry-run
+
+   # 役割ごとにディレクトリを分ける場合（推奨）
+   scripts/herdr-team.sh init --team <name> \
+     --host-repo <host> --impl-repo <impl> --review-repo <review> \
+     --kind implementation=codex --kind review=codex
    ```
 
 2. 状態を見る（読み取りのみ、いつでも安全）。
@@ -66,25 +71,44 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
 結果は role / pane / kind / 状態 / cwd を簡潔に報告する。pane id を推測して報告しない
 （必ずスクリプトの出力を使う）。
 
-## config の形
+## 設定は2層に分かれている
 
-`config/<team>.json`。`ratio` の合計は 1.0 にする。
+**このスキルはリポジトリ固有の値を持たない。** 公開 skill にローカルパスを持ち込まないため。
+
+| 層 | 場所 | 内容 |
+|---|---|---|
+| 全リポジトリ共通の既定値 | `config/defaults.json`（skill 内） | ロール構成・kind・比率・`cwd_from`。パスは持たない |
+| リポジトリ固有の解決済み設定 | `${HERDR_TEAM_CONFIG_DIR:-~/.config/herdr-agent-team}/<team>.json` | `init` が生成。実パス入り |
+
+`defaults.json` を編集すると、以後 `init` する**全チーム**に効く。特定チームだけ変えたいときは
+`init` のオプション（`--kind` / `--ratio`）か、生成された設定を直接編集する。
+
+`cwd_from` は `host` / `implementation` / `review` のどれを使うかの指定で、`init` が
+`--host-repo` / `--impl-repo` / `--review-repo` の実パスに解決する。
+既定は intent-cli guide の割り当てに合わせてある（design と orchestrator は host、
+implementation は実装リポジトリ、review は独立した review の cwd）。
+
+生成される設定の形:
 
 ```json
 {
-  "team": "dotfiles-dev",
-  "host_repo": "/abs/path/to/host-repo",
+  "team": "<name>",
+  "host_repo": "/abs/path",
+  "repos": { "host": "/abs", "implementation": "/abs", "review": "/abs" },
   "roles": [
-    { "role": "design",         "kind": "claude", "cwd": "/abs/path", "ratio": 0.40, "caller": true },
-    { "role": "orchestrator",   "kind": "claude", "cwd": "/abs/path", "ratio": 0.24 },
-    { "role": "implementation", "kind": "codex",  "cwd": "/abs/path", "ratio": 0.18 },
-    { "role": "review",         "kind": "codex",  "cwd": "/abs/path", "ratio": 0.18 }
+    { "role": "design", "kind": "claude", "cwd": "/abs", "ratio": 0.40, "caller": true },
+    { "role": "orchestrator", "kind": "claude", "cwd": "/abs", "ratio": 0.24 },
+    { "role": "implementation", "kind": "codex", "cwd": "/abs", "ratio": 0.18 },
+    { "role": "review", "kind": "codex", "cwd": "/abs", "ratio": 0.18 }
   ]
 }
 ```
 
+`ratio` の合計は 1.0（`init` が検証して外れていれば拒否する）。
+
 - `caller: true` のロールは**このセッション自身が居る pane**に割り当てられ、agent は起動しない
-  （自分を起動し直さない）。通常は `design` に付ける。
+  （自分を起動し直さない）。通常は `design` に付ける。caller pane の cwd は起動時に決まって
+  いて変えられないので、config と食い違っても `doctor` は「注意」に留める。
 - `kind` は herdr がサポートするもの（`herdr agent --help` の kinds 行で確認）。
   ロールごとに別 kind を混在させてよい。
 - `launch_flags`（任意・配列）は `herdr agent start ... -- <flags>` に渡される。
@@ -116,6 +140,13 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
 
 `scripts/herdr-team.sh` が担うこと。
 
+- `init` — `defaults.json` の `cwd_from` を実パスに解決し、`--kind role=kind` /
+  `--ratio role=n` の上書きを適用して team 設定を生成する。`--host-repo` 省略時は
+  cwd の git トップレベルを使う。review と implementation が同じディレクトリなら警告する
+  （ロール分離が弱くなるため）。
+- `adopt` — 手で組んだ既存レイアウトを取り込む。caller と同じタブの pane を x 昇順に並べ、
+  config の roles の順に対応づけて mapping に記録する。pane 数と role 数が合わなければ拒否。
+  取り込んだ pane は `created_by_skill: false` なので `down` では閉じない。
 - `status` — config と実機の突き合わせ。role / pane / kind / agent_status / cwd / 齟齬を表で出す。
 - `up` — 冪等。caller pane を design に割り当て、足りないロールを右方向に split（cwd 指定）、
   pane に role 名を rename、`ratio` を適用、`caller` 以外に `herdr agent start` を実行、

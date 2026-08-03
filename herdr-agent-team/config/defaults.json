@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "全リポジトリ共通の既定値。パスは持たない（リポジトリ固有の値は init が解決する）。",
+    "cwd_from は init に渡された --host-repo / --impl-repo / --review-repo のどれを使うかの指定。",
+    "この既定値を変えると、以後 init するチーム全部に効く。",
+    "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
+  ],
+  "roles": [
+    { "role": "design",         "kind": "claude", "ratio": 0.40, "caller": true, "cwd_from": "host" },
+    { "role": "orchestrator",   "kind": "claude", "ratio": 0.24, "cwd_from": "host" },
+    { "role": "implementation", "kind": "claude", "ratio": 0.18, "cwd_from": "implementation" },
+    { "role": "review",         "kind": "claude", "ratio": 0.18, "cwd_from": "review" }
+  ]
+}

@@ -10,7 +10,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="$SCRIPT_DIR/../config"
+# スキルが持つのは全リポジトリ共通の既定値だけ。リポジトリ固有の解決済み設定は
+# ユーザーの設定ディレクトリに置く（公開 skill にローカルパスを持ち込まないため）。
+DEFAULTS_FILE="$SCRIPT_DIR/../config/defaults.json"
+CONFIG_DIR="${HERDR_TEAM_CONFIG_DIR:-$HOME/.config/herdr-agent-team}"
 
 # ---------- 基本ガード -------------------------------------------------------
 
@@ -52,7 +55,9 @@ DRY_RUN=0
 load_config() {
   [ -n "$TEAM" ] || die "--team <name> が必要"
   CFG="$CONFIG_DIR/$TEAM.json"
-  [ -f "$CFG" ] || die "config が無い: $CFG"
+  [ -f "$CFG" ] || die "team '$TEAM' の設定が無い: $CFG
+  先に init で作ること:
+    herdr-team.sh init --team $TEAM --host-repo <path> [--impl-repo <path>] [--review-repo <path>]"
   jq -e . "$CFG" >/dev/null 2>&1 || die "config が JSON として不正: $CFG"
 
   local sum
@@ -129,6 +134,77 @@ write_mapping() { # assoc: role=pane_id;created の行を stdin で受ける
   jq -e . "$tmp" >/dev/null || { rm -f "$tmp"; die "mapping の生成に失敗（JSON 不正）"; }
   mv "$tmp" "$mp"
   note "mapping を書き出した: $mp"
+}
+
+# ---------- サブコマンド: init -----------------------------------------------
+
+HOST_REPO=""
+IMPL_REPO=""
+REVIEW_REPO=""
+declare -a KIND_OVERRIDES=()
+declare -a RATIO_OVERRIDES=()
+
+abspath() { ( cd "$1" 2>/dev/null && pwd ) || die "ディレクトリが存在しない: $1"; }
+
+# リポジトリ固有のパスを解決して <config-dir>/<team>.json を生成する。
+# 既定のロール構成・kind・比率は config/defaults.json（全リポジトリ共通）から取る。
+cmd_init() {
+  [ -n "$TEAM" ] || die "--team <name> が必要"
+  [ -f "$DEFAULTS_FILE" ] || die "既定値が無い: $DEFAULTS_FILE"
+
+  # host-repo の既定は cwd の git トップレベル
+  if [ -z "$HOST_REPO" ]; then
+    HOST_REPO="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -n "$HOST_REPO" ] || die "--host-repo を指定すること（cwd が git リポジトリでないため既定値を決められない）"
+    note "host-repo を cwd から推定: $HOST_REPO"
+  fi
+  HOST_REPO="$(abspath "$HOST_REPO")"
+  IMPL_REPO="$(abspath "${IMPL_REPO:-$HOST_REPO}")"
+  REVIEW_REPO="$(abspath "${REVIEW_REPO:-$IMPL_REPO}")"
+
+  [ "$REVIEW_REPO" != "$IMPL_REPO" ] || \
+    note "! review と implementation が同じディレクトリです。ロールの分離が弱くなります（--review-repo で分けられます）"
+
+  mkdir -p "$CONFIG_DIR"
+  local out="$CONFIG_DIR/$TEAM.json"
+  local tmp; tmp="$(mktemp)"
+
+  # 既定値の cwd_from を実パスに解決し、kind / ratio の上書きを適用する
+  jq \
+    --arg team "$TEAM" --arg host "$HOST_REPO" --arg impl "$IMPL_REPO" --arg rev "$REVIEW_REPO" \
+    --argjson kinds "$(printf '%s\n' "${KIND_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
+    --argjson ratios "$(printf '%s\n' "${RATIO_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): (.[1]|tonumber)}] | add // {}')" \
+    '{
+       team: $team,
+       host_repo: $host,
+       repos: { host: $host, implementation: $impl, review: $rev },
+       roles: [ .roles[] | . as $r |
+         {
+           role: $r.role,
+           kind: ($kinds[$r.role] // $r.kind),
+           cwd: ({host:$host, implementation:$impl, review:$rev}[$r.cwd_from // "host"]),
+           ratio: ($ratios[$r.role] // $r.ratio)
+         }
+         + (if $r.caller == true then {caller: true} else {} end)
+         + (if $r.launch_flags then {launch_flags: $r.launch_flags} else {} end)
+       ]
+     }' "$DEFAULTS_FILE" >"$tmp"
+
+  jq -e . "$tmp" >/dev/null || { rm -f "$tmp"; die "設定の生成に失敗（JSON 不正）"; }
+
+  local sum; sum="$(jq '[.roles[].ratio] | add' "$tmp")"
+  awk -v s="$sum" 'BEGIN{ if (s < 0.95 || s > 1.05) exit 1 }' \
+    || { rm -f "$tmp"; die "ratio の合計が 1.0 から外れている（$sum）。--ratio で調整すること"; }
+
+  if [ "$DRY_RUN" = 1 ]; then
+    note "(dry-run) 生成される内容:"; cat "$tmp"; rm -f "$tmp"; return 0
+  fi
+  if [ -f "$out" ]; then
+    note "! 既存の設定を上書きします: $out"
+  fi
+  mv "$tmp" "$out"
+  note "設定を書き出した: $out"
+  cat "$out"
 }
 
 # ---------- サブコマンド: status ---------------------------------------------
@@ -379,13 +455,21 @@ cmd_doctor() {
     status="$(pane_field "$pane" agent_status)"
     cwd_live="$(pane_field "$pane" cwd)"
 
-    if [ "$cwd_live" != "$cwd_cfg" ]; then
-      note "  [cwd不一致] $role ($pane) — 実機=$cwd_live / config=$cwd_cfg"; problems=$((problems+1))
+    if [ "$role" = "$caller_role" ]; then
+      # caller pane は起動し直さないと cwd を変えられないので、指摘ではなく注意に留める
+      if [ "$cwd_live" != "$cwd_cfg" ]; then
+        note "  [注意] $role ($pane) — caller pane の cwd が config と違う"
+        note "         実機=$cwd_live"
+        note "         config=$cwd_cfg"
+        note "         次回このロールを起動するときは config 側の cwd で開くこと（今の session は変えられない）"
+      else
+        note "  [ok] $role ($pane) — caller pane"
+      fi
+      continue
     fi
 
-    if [ "$role" = "$caller_role" ]; then
-      note "  [ok] $role ($pane) — caller pane"
-      continue
+    if [ "$cwd_live" != "$cwd_cfg" ]; then
+      note "  [cwd不一致] $role ($pane) — 実機=$cwd_live / config=$cwd_cfg"; problems=$((problems+1))
     fi
 
     if [ "$kind_live" = "-" ] || [ -z "$kind_live" ]; then
@@ -441,16 +525,39 @@ cmd_down() {
 
 # ---------- 引数 -------------------------------------------------------------
 
-[ $# -ge 1 ] || die "使い方: herdr-team.sh <up|adopt|status|swap|ratio|doctor|down> --team <name> [--role R --kind K] [--dry-run]"
+USAGE='使い方:
+  herdr-team.sh init   --team <name> [--host-repo P] [--impl-repo P] [--review-repo P]
+                       [--kind <role>=<kind>]... [--ratio <role>=<0.0-1.0>]...
+  herdr-team.sh adopt  --team <name>          # 手で組んだ既存レイアウトを取り込む
+  herdr-team.sh up     --team <name>          # 不足ロールを配備して agent を起動
+  herdr-team.sh status --team <name>
+  herdr-team.sh swap   --team <name> --role <role> --kind <kind>
+  herdr-team.sh ratio  --team <name>
+  herdr-team.sh doctor --team <name>
+  herdr-team.sh down   --team <name>
+共通: --dry-run
+設定の場所: ${HERDR_TEAM_CONFIG_DIR:-~/.config/herdr-agent-team}/<team>.json'
+
+[ $# -ge 1 ] || die "$USAGE"
 SUB="$1"; shift
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --team) TEAM="${2:-}"; shift 2 ;;
     --role) SWAP_ROLE="${2:-}"; shift 2 ;;
-    --kind) SWAP_KIND="${2:-}"; shift 2 ;;
+    --host-repo) HOST_REPO="${2:-}"; shift 2 ;;
+    --impl-repo) IMPL_REPO="${2:-}"; shift 2 ;;
+    --review-repo) REVIEW_REPO="${2:-}"; shift 2 ;;
+    --ratio) RATIO_OVERRIDES+=("${2:-}"); shift 2 ;;
+    # init では role=kind 形式（繰り返し可）、swap では kind 単体
+    --kind)
+      case "${2:-}" in
+        *=*) KIND_OVERRIDES+=("${2}") ;;
+        *)   SWAP_KIND="${2:-}" ;;
+      esac
+      shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) die "使い方: herdr-team.sh <up|status|swap|ratio|doctor|down> --team <name>" ;;
+    -h|--help) die "$USAGE" ;;
     *) die "不明な引数: $1" ;;
   esac
 done
@@ -458,6 +565,7 @@ done
 require_env
 
 case "$SUB" in
+  init)   cmd_init ;;
   up)     cmd_up ;;
   adopt)  cmd_adopt ;;
   status) cmd_status ;;
