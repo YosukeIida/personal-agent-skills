@@ -51,6 +51,7 @@ assert_same_workspace() {
 CFG=""
 TEAM=""
 DRY_RUN=0
+FORCE=0
 
 load_config() {
   [ -n "$TEAM" ] || die "--team <name> が必要"
@@ -74,6 +75,45 @@ cfg_caller_role() { jq -r '.roles[] | select(.caller==true) | .role' "$CFG"; }
 cfg_launch_flags() { jq -r --arg r "$1" '.roles[] | select(.role==$r) | (.launch_flags // []) | join(" ")' "$CFG"; }
 
 mapping_path() { printf '%s/.intent-cli/role-pane-mapping.json' "$(cfg_host_repo)"; }
+
+# role の model / effort / launch_flags を、その kind の実フラグに変換して
+# LAUNCH_ARGS 配列に入れる（`herdr agent start ... -- <ここ>` に渡す）。
+#
+# 実測で確認したフラグ（2026-08）:
+#   claude: --model <m> / --effort <level>
+#   codex : --model <m> / -c model_reasoning_effort=<level>
+#           （引用符なしで codex --strict-config が受理するので、シェル経由でも安全）
+# 権限モードは launch_flags に書く。起動後に修飾キーで切り替えるのは信頼できない。
+build_launch_args() {
+  local role="$1" kind="$2"
+  local model effort flags
+  model="$(cfg_role_field "$role" model)"
+  effort="$(cfg_role_field "$role" effort)"
+  flags="$(cfg_launch_flags "$role")"
+
+  LAUNCH_ARGS=()
+  case "$kind" in
+    claude)
+      [ -n "$model" ]  && LAUNCH_ARGS+=(--model "$model")
+      [ -n "$effort" ] && LAUNCH_ARGS+=(--effort "$effort")
+      ;;
+    codex)
+      [ -n "$model" ]  && LAUNCH_ARGS+=(--model "$model")
+      [ -n "$effort" ] && LAUNCH_ARGS+=(-c "model_reasoning_effort=$effort")
+      ;;
+    *)
+      if [ -n "$model$effort" ]; then
+        note "! $role: kind '$kind' の model/effort フラグ対応を持っていないので無視した。"
+        note "  必要なら launch_flags にその agent のフラグを直接書くこと"
+      fi
+      ;;
+  esac
+  # launch_flags はそのまま後ろに足す（空白区切り）
+  if [ -n "$flags" ]; then
+    local f
+    for f in $flags; do LAUNCH_ARGS+=("$f"); done
+  fi
+}
 
 # ---------- herdr 読み取り ---------------------------------------------------
 
@@ -143,6 +183,8 @@ IMPL_REPO=""
 REVIEW_REPO=""
 declare -a KIND_OVERRIDES=()
 declare -a RATIO_OVERRIDES=()
+declare -a MODEL_OVERRIDES=()
+declare -a EFFORT_OVERRIDES=()
 
 abspath() { ( cd "$1" 2>/dev/null && pwd ) || die "ディレクトリが存在しない: $1"; }
 
@@ -174,6 +216,8 @@ cmd_init() {
     --arg team "$TEAM" --arg host "$HOST_REPO" --arg impl "$IMPL_REPO" --arg rev "$REVIEW_REPO" \
     --argjson kinds "$(printf '%s\n' "${KIND_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
     --argjson ratios "$(printf '%s\n' "${RATIO_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): (.[1]|tonumber)}] | add // {}')" \
+    --argjson models "$(printf '%s\n' "${MODEL_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
+    --argjson efforts "$(printf '%s\n' "${EFFORT_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
     '{
        team: $team,
        host_repo: $host,
@@ -186,6 +230,8 @@ cmd_init() {
            ratio: ($ratios[$r.role] // $r.ratio)
          }
          + (if $r.caller == true then {caller: true} else {} end)
+         + (($models[$r.role] // $r.model)  | if . then {model: .}  else {} end)
+         + (($efforts[$r.role] // $r.effort) | if . then {effort: .} else {} end)
          + (if $r.launch_flags then {launch_flags: $r.launch_flags} else {} end)
        ]
      }' "$DEFAULTS_FILE" >"$tmp"
@@ -279,6 +325,11 @@ cmd_adopt() {
 # 幅の下限。これを割ると承認ダイアログが読めなくなるので、下回る計画は実行しない。
 MIN_PANE_COLS="${HERDR_TEAM_MIN_PANE_COLS:-40}"
 
+# ロールの目標幅（桁）= 領域幅 × ratio
+target_cols() {
+  awk -v a="$(area_width)" -v r="$(cfg_role_field "$1" ratio)" 'BEGIN{printf "%d", a*r}'
+}
+
 # 連続 split で作った pane は「入れ子の二分木」になる（p1 | (pA | (pB | pC))）。
 # ここで実測して分かった resize の性質（2026-08 herdr で確認）:
 #   - `resize --pane X --direction D` は X が D 方向に伸びて広くなる（縮まない）
@@ -363,7 +414,7 @@ cmd_up() {
   [ -n "$caller_role" ] || die "config に caller:true のロールが無い（自分の pane を割り当てられない）"
 
   local -a lines=()
-  local prev_pane="$HERDR_PANE_ID"
+  local prev_pane="$HERDR_PANE_ID" prev_role=""
   local role pane kind cwd created
 
   for role in $(cfg_roles); do
@@ -380,23 +431,40 @@ cmd_up() {
         note "$role: 既存 pane $pane を再利用"
       else
         [ -d "$cwd" ] || die "$role の cwd が存在しない: $cwd"
+        # 分割時に --ratio を渡して一発で正確な幅にする（あとから resize で
+        # 追い込む必要がない）。--ratio は「元 pane が保持する比率」で、
+        # 分母はその分割ノードのローカル container = 分割元 pane の現在幅。
+        # 分割元は直前ロールの pane なので、渡す比率は「直前ロールの目標幅 ÷ 分割元の現在幅」。
+        local split_ratio="" prev_target prev_w
+        if [ -n "$prev_role" ]; then
+          prev_w="$(pane_width "$prev_pane" 2>/dev/null || true)"
+          prev_target="$(target_cols "$prev_role")"
+          if [ -n "$prev_w" ] && [ "$prev_w" -gt 0 ] 2>/dev/null; then
+            split_ratio="$(awk -v t="$prev_target" -v w="$prev_w" 'BEGIN{ r=t/w; if(r<0.05)r=0.05; if(r>0.95)r=0.95; printf "%.4f", r }')"
+          fi
+        fi
         if [ "$DRY_RUN" = 1 ]; then
           # 実行時は新 pane が次の split 元になるので、その連鎖を表示に反映する
-          note "would: pane split --pane $prev_pane --direction right --cwd $cwd   → $role"
+          note "would: pane split --pane $prev_pane --direction right${split_ratio:+ --ratio $split_ratio} --cwd $cwd   → $role"
           pane="(new:$role)"; created=true
         else
           require_id "split 元 pane" "$prev_pane"
           assert_same_workspace "$prev_pane" "$HERDR_WORKSPACE_ID"
-          pane="$(herdr pane split --pane "$prev_pane" --direction right --cwd "$cwd" --no-focus \
-                  | jq -r '.result.pane.pane_id')"
+          if [ -n "$split_ratio" ]; then
+            pane="$(herdr pane split --pane "$prev_pane" --direction right --ratio "$split_ratio" \
+                      --cwd "$cwd" --no-focus | jq -r '.result.pane.pane_id')"
+          else
+            pane="$(herdr pane split --pane "$prev_pane" --direction right \
+                      --cwd "$cwd" --no-focus | jq -r '.result.pane.pane_id')"
+          fi
           require_id "$role の新 pane" "$pane"
           herdr pane rename "$pane" "$role" >/dev/null 2>&1 || true
           created=true
-          note "$role: pane $pane を作成（cwd=${cwd}）"
+          note "$role: pane $pane を作成（cwd=${cwd}${split_ratio:+, ratio=${split_ratio}}）"
         fi
       fi
     fi
-    prev_pane="$pane"
+    prev_pane="$pane"; prev_role="$role"
     lines+=("$role|$pane|$created")
   done
 
@@ -421,11 +489,10 @@ cmd_up() {
       continue
     fi
     kind="$(cfg_role_field "$role" kind)"
-    flags="$(cfg_launch_flags "$role")"
-    note "$role: herdr agent start $role --kind $kind --pane $pane ${flags:+-- $flags}"
-    # shellcheck disable=SC2086
-    if [ -n "$flags" ]; then
-      herdr agent start "$role" --kind "$kind" --pane "$pane" -- $flags >/dev/null \
+    build_launch_args "$role" "$kind"
+    note "$role: herdr agent start $role --kind $kind --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
+    if [ "${#LAUNCH_ARGS[@]}" -gt 0 ]; then
+      herdr agent start "$role" --kind "$kind" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null \
         || note "  ! 起動に失敗（doctor で確認すること）"
     else
       herdr agent start "$role" --kind "$kind" --pane "$pane" >/dev/null \
@@ -450,21 +517,63 @@ cmd_swap() {
   pane_exists "$pane" || die "$SWAP_ROLE の pane が見つからない（先に up を実行）"
   assert_same_workspace "$pane" "$HERDR_WORKSPACE_ID"
 
-  local live; live="$(pane_field "$pane" agent)"
+  local live status
+  live="$(pane_field "$pane" agent)"
+  status="$(pane_field "$pane" agent_status)"
   if [ "$live" != "-" ] && [ -n "$live" ]; then
-    die "$pane で $live が稼働中。作業を殺さないため自動では入れ替えない。
-  その pane で対話的に終了させてから再実行すること（graceful drop が先）。
-  現在の状態: $(pane_field "$pane" agent_status)"
+    # working は作業中なので --force でも触らない（進行中の仕事を殺さない）
+    if [ "$status" = "working" ]; then
+      die "$pane の $live は working（作業中）。--force でも入れ替えない。
+  完了を待つか、その pane で対話的に停止させること"
+    fi
+    if [ "$FORCE" != 1 ]; then
+      die "$pane で $live が稼働中（status=$status）。既定では入れ替えない。
+  作業が無いことを確認済みなら --force を付けること。
+  あるいはその pane で対話的に終了させてから再実行する（graceful drop が先）"
+    fi
+    # --force: graceful に終了させてから入れ替える
+    note "$SWAP_ROLE: $live を終了させる（status=$status, --force 指定）"
+    if [ "$DRY_RUN" = 1 ]; then
+      note "would: $live に終了を指示し、agent が消えるのを待ってから起動し直す"
+    else
+      # 段階的に終了させる。Claude Code は `/exit` を打つと**スラッシュコマンドの
+      # 補完メニューが開き、最初の Enter が補完確定に消費される**（実測）。
+      # そのため Enter の追い送りが必要で、それでも駄目なら ctrl+c を2回送る。
+      _agent_gone() {
+        local a; a="$(pane_field "$pane" agent)"
+        [ "$a" = "-" ] || [ -z "$a" ]
+      }
+      _wait_gone() { # 秒数
+        local n=0
+        while [ "$n" -lt "$1" ]; do _agent_gone && return 0; sleep 1; n=$((n+1)); done
+        return 1
+      }
+      herdr agent prompt "$SWAP_ROLE" "/exit" >/dev/null 2>&1 || true
+      if ! _wait_gone 6; then
+        note "  補完メニューで Enter が消費された可能性があるので Enter を追い送りする"
+        herdr pane send-keys "$pane" enter >/dev/null 2>&1 || true
+      fi
+      if ! _wait_gone 8; then
+        note "  まだ生きているので ctrl+c を2回送る"
+        herdr pane send-keys "$pane" ctrl+c ctrl+c >/dev/null 2>&1 || true
+        _wait_gone 8 || true
+      fi
+      if ! _agent_gone; then
+        die "$pane の $live が終了しなかった。
+  その pane を見て手で終了させてから再実行すること（強制的な kill はしない）"
+      fi
+      note "  終了を確認した"
+    fi
   fi
 
+  # kind を変えると model/effort のフラグ形式も変わるので、新しい kind で組み直す
+  build_launch_args "$SWAP_ROLE" "$SWAP_KIND"
   if [ "$DRY_RUN" = 1 ]; then
-    note "would: herdr agent start $SWAP_ROLE --kind $SWAP_KIND --pane $pane"
+    note "would: herdr agent start $SWAP_ROLE --kind $SWAP_KIND --pane $pane${LAUNCH_ARGS[0]+ -- ${LAUNCH_ARGS[*]}}"
     return 0
   fi
-  local flags; flags="$(cfg_launch_flags "$SWAP_ROLE")"
-  # shellcheck disable=SC2086
-  if [ -n "$flags" ]; then
-    herdr agent start "$SWAP_ROLE" --kind "$SWAP_KIND" --pane "$pane" -- $flags >/dev/null
+  if [ "${#LAUNCH_ARGS[@]}" -gt 0 ]; then
+    herdr agent start "$SWAP_ROLE" --kind "$SWAP_KIND" --pane "$pane" -- "${LAUNCH_ARGS[@]}" >/dev/null
   else
     herdr agent start "$SWAP_ROLE" --kind "$SWAP_KIND" --pane "$pane" >/dev/null
   fi
@@ -516,9 +625,17 @@ cmd_doctor() {
     else
       [ "$kind_live" = "$kind_cfg" ] || {
         note "  [kind不一致] $role ($pane) — 実機=$kind_live / config=$kind_cfg"; problems=$((problems+1)); }
-      # pane を読んで、シェルプロンプトに戻っていないか / 承認待ちでないかを見る
-      tail="$(herdr pane read "$pane" --source recent-unwrapped --lines 12 2>/dev/null | tail -4 || true)"
-      if printf '%s' "$tail" | grep -qiE '(y/n|\[y/N\]|approve|permission|trust|do you want|allow\?)'; then
+      # pane を読んで承認待ちでないかを見る。
+      # source の選択が重要: codex など alternate screen で動く agent は
+      # recent-unwrapped / host scrollback が**空**になる（実測）。
+      # detection（agent 検出に使う bottom-buffer）→ visible → recent-unwrapped の順に試す。
+      tail=""
+      local src
+      for src in detection visible recent-unwrapped; do
+        tail="$(herdr pane read "$pane" --source "$src" --lines 20 2>/dev/null || true)"
+        [ -n "$tail" ] && break
+      done
+      if printf '%s' "$tail" | grep -qiE '(y/n|\[y/N\]|approve|permission|do you trust|trust the contents|do you want|allow\?|press enter to continue|^ *›? *1\. )'; then
         note "  [承認待ち?] $role ($pane) status=$status — pane に承認/選択のプロンプトらしき表示がある"
         note "             → 内容を読んでから判断すること。破壊的・認証・権限に関わるものは operator に上げる"
         problems=$((problems+1))
@@ -566,6 +683,7 @@ cmd_down() {
 USAGE='使い方:
   herdr-team.sh init   --team <name> [--host-repo P] [--impl-repo P] [--review-repo P]
                        [--kind <role>=<kind>]... [--ratio <role>=<0.0-1.0>]...
+                       [--model <role>=<model>]... [--effort <role>=<level>]...
   herdr-team.sh adopt  --team <name>          # 手で組んだ既存レイアウトを取り込む
   herdr-team.sh up     --team <name>          # 不足ロールを配備して agent を起動
   herdr-team.sh status --team <name>
@@ -573,7 +691,7 @@ USAGE='使い方:
   herdr-team.sh ratio  --team <name>
   herdr-team.sh doctor --team <name>
   herdr-team.sh down   --team <name>
-共通: --dry-run
+共通: --dry-run   swap のみ: --force（idle な agent を終了させて入れ替える）
 設定の場所: ${HERDR_TEAM_CONFIG_DIR:-~/.config/herdr-agent-team}/<team>.json'
 
 [ $# -ge 1 ] || die "$USAGE"
@@ -587,6 +705,8 @@ while [ $# -gt 0 ]; do
     --impl-repo) IMPL_REPO="${2:-}"; shift 2 ;;
     --review-repo) REVIEW_REPO="${2:-}"; shift 2 ;;
     --ratio) RATIO_OVERRIDES+=("${2:-}"); shift 2 ;;
+    --model) MODEL_OVERRIDES+=("${2:-}"); shift 2 ;;
+    --effort) EFFORT_OVERRIDES+=("${2:-}"); shift 2 ;;
     # init では role=kind 形式（繰り返し可）、swap では kind 単体
     --kind)
       case "${2:-}" in
@@ -595,6 +715,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --force) FORCE=1; shift ;;
     -h|--help) die "$USAGE" ;;
     *) die "不明な引数: $1" ;;
   esac
