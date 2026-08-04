@@ -781,7 +781,7 @@ cmd_doctor() {
     want_ident="$(agent_ident "$role")"
     agent_name="$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)"
     if [ "$agent_name" != "$want_ident" ]; then
-      note "  [role名なし] $role ($pane) — agent の herdr identity が「${agent_name:-未設定}」（期待値: $want_ident）"
+      note "  [role名なし] $role ($pane) — agent の herdr identity が「${agent_name:-未設定}」（期待値: ${want_ident}）"
       note "               この状態では宛先解決から漏れる。修復: herdr agent rename $pane $want_ident"
       problems=$((problems+1))
     fi
