@@ -11,9 +11,9 @@
     "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
   ],
   "roles": [
-    { "role": "design",         "kind": "claude", "ratio": 0.40, "caller": true, "cwd_from": "host", "resident": "external" },
-    { "role": "orchestrator",   "kind": "claude", "ratio": 0.24, "cwd_from": "host" },
-    { "role": "implementation", "kind": "claude", "ratio": 0.18, "cwd_from": "implementation" },
-    { "role": "review",         "kind": "codex",  "ratio": 0.18, "cwd_from": "review" }
+    { "role": "design",         "kind": "claude", "ratio": 0.40, "caller": true, "cwd_from": "host", "resident": "external", "model": "opus", "effort": "high" },
+    { "role": "orchestrator",   "kind": "claude", "ratio": 0.24, "cwd_from": "host", "model": "opus", "effort": "high" },
+    { "role": "implementation", "kind": "claude", "ratio": 0.18, "cwd_from": "implementation", "model": "sonnet", "effort": "medium" },
+    { "role": "review",         "kind": "codex",  "ratio": 0.18, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high" }
   ]
 }
