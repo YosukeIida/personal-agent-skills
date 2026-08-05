@@ -110,14 +110,20 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
   "repos": { "host": "/abs", "implementation": "/abs", "review": "/abs" },
   "roles": [
     { "role": "design", "kind": "claude", "cwd": "/abs", "ratio": 0.40, "caller": true },
-    { "role": "orchestrator", "kind": "claude", "cwd": "/abs", "ratio": 0.24 },
-    { "role": "implementation", "kind": "codex", "cwd": "/abs", "ratio": 0.18 },
-    { "role": "review", "kind": "codex", "cwd": "/abs", "ratio": 0.18 }
+    { "role": "orchestrator", "kind": "claude", "cwd": "/abs", "ratio": 0.25 },
+    { "role": "implementation", "kind": "codex", "cwd": "/abs", "ratio": 0.35 },
+    { "role": "review", "kind": "codex", "cwd": "/abs", "ratio": 0.35, "stack_below": "implementation", "stack_ratio": 0.5 }
   ]
 }
 ```
 
-`ratio` の合計は 1.0（`init` が検証して外れていれば拒否する）。
+既定レイアウトは3列: design | orchestrator | 右列（implementation 上・review 下、縦積み）。
+`stack_below` は「このロールを親ロールの真下に縦積みする」指定。指定されたロールは横方向の
+境界調整（`ratio` サブコマンド）の対象から外れ、親ロールと同じ列の幅を共有する。`stack_ratio`
+は縦split時の親:子の比率（省略時 0.5＝50/50）。
+
+`ratio` の合計は 1.0（`init` が検証して外れていれば拒否する）。**`stack_below` を持つロールの
+`ratio` はこの合計に含めない**（親と同じ列の幅を共有するだけなので、含めると二重計上になる）。
 
 - `caller: true` のロールは**このセッション自身が居る pane**に割り当てられ、agent は起動しない
   （自分を起動し直さない）。通常は `design` に付ける。caller pane の cwd は起動時に決まって
@@ -245,18 +251,22 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
   `--ratio role=n` の上書きを適用して team 設定を生成する。`--host-repo` 省略時は
   cwd の git トップレベルを使う。review と implementation が同じディレクトリなら警告する
   （ロール分離が弱くなるため）。
-- `adopt` — 手で組んだ既存レイアウトを取り込む。caller と同じタブの pane を x 昇順に並べ、
-  config の roles の順に対応づけて mapping に記録する。pane 数と role 数が合わなければ拒否。
+- `adopt` — 手で組んだ既存レイアウトを取り込む。caller と同じタブの pane を x 昇順、
+  同じ列内（同じ x）は y 昇順に並べ、config の roles の順（親ロールの直後に子ロールを
+  書く前提）に対応づけて mapping に記録する。pane 数と role 数が合わなければ拒否。
   取り込んだ pane は `created_by_skill: false` なので `down` では閉じない。
 - `status` — config と実機の突き合わせ。role / pane / kind / agent_status / cwd / 齟齬を表で出す。
-- `up` — 冪等。caller pane を design に割り当て、足りないロールを右方向に split（cwd 指定）、
-  pane に role 名を rename、`ratio` を適用、`caller` 以外に `herdr agent start` を実行、
-  `<host_repo>/.intent-cli/role-pane-mapping.json` を書き出し、最後に `doctor` を走らせる。
+- `up` — 冪等。caller pane を design に割り当て、足りないロールを右方向に split（cwd 指定）。
+  `stack_below` を持つロールは横方向ではなく、親ロールの pane の真下に `--direction down`
+  で split する（横方向の連結には加わらない）。pane に role 名を rename、`ratio` を適用、
+  `caller` 以外に `herdr agent start` を実行、`<host_repo>/.intent-cli/role-pane-mapping.json`
+  を書き出し、最後に `doctor` を走らせる。
 - `swap` — 指定ロールの kind を入れ替える。**agent が生きている pane では実行を拒否する**
   （作業中のセッションを殺さないため）。先に operator がその pane で終了させること。
-- `ratio` — 実測 → 目標との差分を境界ごとに resize して収束させる。
-  `pane resize --direction` は**指定した pane がその方向に伸びて広くなる**（縮まない）ので、
-  スクリプトが符号を扱う。
+- `ratio` — 実測 → 目標との差分を境界ごとに resize して収束させる。`stack_below` を持つ
+  ロールは横方向の境界調整の対象から外れる（親と同じ列の幅を共有するだけなので、縦split時の
+  50/50 はそのまま維持される）。`pane resize --direction` は**指定した pane がその方向に
+  伸びて広くなる**（縮まない）ので、スクリプトが符号を扱う。
 - `nudge` — 貼られたまま submit されずに止まっている pane に enter を送る。`--role` で
   1ロールに絞れる。判定は pane を読んで `[Pasted text …]` が入力欄に残っているかで行い、
   残っていない pane には何も送らない（空 enter を撒かない）。何を送るかには関与しない。

@@ -7,13 +7,19 @@
     "codex は --model / -c model_reasoning_effort=<effort>。",
     "resident は宛先の受け取り方。既定は herdr（pane に送られる）。external にすると",
     "pane 宛の送信ではなく events ファイルへの追記で受け取り、reader が init で実体化される。",
+    "レイアウトは3列: design | orchestrator | 右列（implementation 上・review 下、縦積み）。",
+    "stack_below は「このロールを親ロールの真下に縦積みする」指定。指定されたロールは",
+    "横方向の境界調整（ratio コマンド）の対象から外れ、親と同じ列の幅を共有する。",
+    "stack_ratio は縦split時の親:子の比率（省略時 0.5＝50/50）。",
+    "ratio の合計チェックは stack_below の無いロールだけを対象にする（縦積みの子は",
+    "列の幅を親と共有するので二重計上しない）。2026-08 cmux での実測比率を既定値にした。",
     "この既定値を変えると、以後 init するチーム全部に効く。",
     "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
   ],
   "roles": [
     { "role": "design",         "kind": "claude", "ratio": 0.40, "caller": true, "cwd_from": "host", "resident": "external", "model": "opus", "effort": "high" },
-    { "role": "orchestrator",   "kind": "claude", "ratio": 0.24, "cwd_from": "host", "model": "opus", "effort": "high" },
-    { "role": "implementation", "kind": "claude", "ratio": 0.18, "cwd_from": "implementation", "model": "sonnet", "effort": "medium" },
-    { "role": "review",         "kind": "codex",  "ratio": 0.18, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high" }
+    { "role": "orchestrator",   "kind": "claude", "ratio": 0.25, "cwd_from": "host", "model": "opus", "effort": "high" },
+    { "role": "implementation", "kind": "claude", "ratio": 0.35, "cwd_from": "implementation", "model": "sonnet", "effort": "medium" },
+    { "role": "review",         "kind": "codex",  "ratio": 0.35, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
   ]
 }

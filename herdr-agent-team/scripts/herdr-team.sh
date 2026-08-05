@@ -68,10 +68,12 @@ load_config() {
   jq -e . "$CFG" >/dev/null 2>&1 || die "config が JSON として不正: $CFG"
 
   local sum
-  sum="$(jq '[.roles[].ratio] | add' "$CFG")"
+  # stack_below のあるロール（縦積みの子）は親と同じ列の幅を共有するので、
+  # 横方向の ratio 合計には含めない（二重計上を避ける）。
+  sum="$(jq '[.roles[] | select(.stack_below == null) | .ratio] | add' "$CFG")"
   # 合計が 1.0 から大きく外れていたら誤設定
   awk -v s="$sum" 'BEGIN{ if (s < 0.95 || s > 1.05) exit 1 }' \
-    || die "ratio の合計が 1.0 から外れている（現在 ${sum}）"
+    || die "ratio の合計が 1.0 から外れている（現在 ${sum}、stack_below の子ロールは除く）"
 }
 
 cfg_host_repo() { jq -r '.host_repo' "$CFG"; }
@@ -136,9 +138,11 @@ layout_json() { herdr pane layout --pane "$HERDR_PANE_ID" 2>/dev/null; }
 
 area_width() { layout_json | jq -r '.result.layout.area.width'; }
 
-# caller と同じタブに属する pane を x 昇順で返す
+# caller と同じタブに属する pane を x 昇順、同じ列内（同じ x）は y 昇順で返す。
+# 縦積み（stack_below）した列では、config の roles 配列も「親ロールの直後に
+# 子ロールを書く」順になっているので、この順で cmd_adopt が対応づけられる。
 tab_panes_ordered() {
-  layout_json | jq -r '.result.layout.panes | sort_by(.rect.x) | .[].pane_id'
+  layout_json | jq -r '.result.layout.panes | sort_by([.rect.x, .rect.y]) | .[].pane_id'
 }
 
 pane_width() { layout_json | jq -r --arg p "$1" '.result.layout.panes[] | select(.pane_id==$p) | .rect.width'; }
@@ -298,14 +302,18 @@ cmd_init() {
          + (if $r.resident == "external"
               then {reader: ($r.reader // (".intent-cli/events/" + $team + ".jsonl"))}
               else {} end)
+         # stack_below: このロールを親ロールの真下に縦積みする指定。横方向の ratio
+         # 合計には含めない（親と同じ列の幅を共有するため）。
+         + (if $r.stack_below then {stack_below: $r.stack_below} else {} end)
+         + (if $r.stack_ratio then {stack_ratio: $r.stack_ratio} else {} end)
        ]
      }' "$DEFAULTS_FILE" >"$tmp"
 
   jq -e . "$tmp" >/dev/null || { rm -f "$tmp"; die "設定の生成に失敗（JSON 不正）"; }
 
-  local sum; sum="$(jq '[.roles[].ratio] | add' "$tmp")"
+  local sum; sum="$(jq '[.roles[] | select(.stack_below == null) | .ratio] | add' "$tmp")"
   awk -v s="$sum" 'BEGIN{ if (s < 0.95 || s > 1.05) exit 1 }' \
-    || { rm -f "$tmp"; die "ratio の合計が 1.0 から外れている（${sum}）。--ratio で調整すること"; }
+    || { rm -f "$tmp"; die "ratio の合計が 1.0 から外れている（${sum}、stack_below の子ロールは除く）。--ratio で調整すること"; }
 
   if [ "$DRY_RUN" = 1 ]; then
     note "(dry-run) 生成される内容:"; cat "$tmp"; rm -f "$tmp"; return 0
@@ -420,8 +428,11 @@ cmd_ratio() {
   require_id "area width" "$aw"
 
   local -a order=() targets=()
-  local role pane
+  local role pane stack_below
   for role in $(cfg_roles); do
+    stack_below="$(cfg_role_field "$role" stack_below)"
+    # 縦積みロールは親と同じ列の幅を共有するだけなので、横方向の境界調整には含めない
+    [ -z "$stack_below" ] || continue
     pane="$(mapped_pane "$role")"
     pane_exists "$pane" || { note "ratio: $role が未配備なのでスキップ"; continue; }
     order+=("$pane")
@@ -491,11 +502,12 @@ cmd_up() {
 
   local -a lines=()
   local prev_pane="$HERDR_PANE_ID" prev_role=""
-  local role pane kind cwd created
+  local role pane kind cwd created stack_below
 
   for role in $(cfg_roles); do
     kind="$(cfg_role_field "$role" kind)"
     cwd="$(cfg_role_field "$role" cwd)"
+    stack_below="$(cfg_role_field "$role" stack_below)"
 
     if [ "$role" = "$caller_role" ]; then
       pane="$HERDR_PANE_ID"; created=false
@@ -516,6 +528,29 @@ cmd_up() {
       if pane_exists "$pane"; then
         created="$(jq -r --arg r "$role" '.roles[$r].created_by_skill // false' "$(panes_path)")"
         note "$role: 既存 pane $pane を再利用"
+      elif [ -n "$stack_below" ]; then
+        # 縦積み: 親ロール（$stack_below）の pane の真下に split する。
+        # 横方向の連結（prev_pane/prev_role）には加わらない — 親と同じ列の幅を
+        # 共有するだけで、次のロールは親の pane から続けて右に split させる。
+        [ -d "$cwd" ] || die "$role の cwd が存在しない: $cwd"
+        local parent_pane stack_ratio
+        parent_pane="$(mapped_pane "$stack_below")"
+        pane_exists "$parent_pane" || \
+          parent_pane="$(printf '%s\n' "${lines[@]:-}" | awk -F'|' -v r="$stack_below" '$1==r{print $2}' | tail -1)"
+        stack_ratio="$(cfg_role_field "$role" stack_ratio)"; : "${stack_ratio:=0.5}"
+        if [ "$DRY_RUN" = 1 ]; then
+          note "would: pane split --pane ${parent_pane:-?} --direction down --ratio $stack_ratio --cwd $cwd   → $role (stack_below=$stack_below)"
+          pane="(new:$role)"; created=true
+        else
+          require_id "$stack_below の pane（$role の縦積み先）" "$parent_pane"
+          assert_same_workspace "$parent_pane" "$HERDR_WORKSPACE_ID"
+          pane="$(herdr pane split --pane "$parent_pane" --direction down --ratio "$stack_ratio" \
+                    --cwd "$cwd" --no-focus | jq -r '.result.pane.pane_id')"
+          require_id "$role の新 pane" "$pane"
+          herdr pane rename "$pane" "$role" >/dev/null 2>&1 || true
+          created=true
+          note "$role: pane $pane を作成（cwd=${cwd}, stack_below=${stack_below}, ratio=${stack_ratio}）"
+        fi
       else
         [ -d "$cwd" ] || die "$role の cwd が存在しない: $cwd"
         # 分割時に --ratio を渡して一発で正確な幅にする（あとから resize で
@@ -550,6 +585,12 @@ cmd_up() {
           note "$role: pane $pane を作成（cwd=${cwd}${split_ratio:+, ratio=${split_ratio}}）"
         fi
       fi
+    fi
+
+    if [ -n "$stack_below" ]; then
+      # 縦積みロールは横方向の連結を更新せず、次のロールは親 pane から続ける
+      lines+=("$role|$pane|$created")
+      continue
     fi
     prev_pane="$pane"; prev_role="$role"
     lines+=("$role|$pane|$created")
