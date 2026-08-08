@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # スキルが持つのは全リポジトリ共通の既定値だけ。リポジトリ固有の解決済み設定は
 # ユーザーの設定ディレクトリに置く（公開 skill にローカルパスを持ち込まないため）。
 DEFAULTS_FILE="$SCRIPT_DIR/../config/defaults.json"
+# kind ごとの model/effort フラグ対応表（ツールの語彙。ロールの好みは defaults.json 側）
+KIND_FLAGS_FILE="$SCRIPT_DIR/../config/kind-flags.json"
 CONFIG_DIR="${HERDR_TEAM_CONFIG_DIR:-$HOME/.config/herdr-agent-team}"
 
 # ---------- 基本ガード -------------------------------------------------------
@@ -90,11 +92,36 @@ panes_path() { printf '%s/%s.panes.json' "$CONFIG_DIR" "$TEAM"; }
 # role の model / effort / launch_flags を、その kind の実フラグに変換して
 # LAUNCH_ARGS 配列に入れる（`herdr agent start ... -- <ここ>` に渡す）。
 #
-# 実測で確認したフラグ（2026-08）:
-#   claude: --model <m> / --effort <level>
-#   codex : --model <m> / -c model_reasoning_effort=<level>
-#           （引用符なしで codex --strict-config が受理するので、シェル経由でも安全）
+# どの kind がどのフラグを取るかは config/kind-flags.json が持つ（ハードコードしない）。
+# 新しい agent に乗り換えるときは、その表に1行足すだけでスクリプトは触らない。
 # 権限モードは launch_flags に書く。起動後に修飾キーで切り替えるのは信頼できない。
+
+# kind-flags.json に載っている kind か
+kind_flags_known() {
+  jq -e --arg k "$1" '.kinds | has($k)' "$KIND_FLAGS_FILE" >/dev/null 2>&1
+}
+
+# kind が combined 形（effort を model id の suffix で渡す）を持つか
+kind_has_combined() {
+  jq -e --arg k "$1" '.kinds[$k] | has("combined")' "$KIND_FLAGS_FILE" >/dev/null 2>&1
+}
+
+# <kind> <combined|model|effort> <model> <effort> → argv トークンを1行ずつ出す
+kind_flag_tokens() {
+  jq -r --arg k "$1" --arg f "$2" --arg m "$3" --arg e "$4" \
+    '(.kinds[$k][$f] // [])
+     | map(gsub("\\{model\\}"; $m) | gsub("\\{effort\\}"; $e))
+     | .[]' "$KIND_FLAGS_FILE"
+}
+
+# トークンを LAUNCH_ARGS に積む（配列要素のまま積むので値に空白が入っても割れない）
+append_kind_flags() {
+  local kind="$1" field="$2" model="$3" effort="$4" tok
+  while IFS= read -r tok; do
+    [ -n "$tok" ] && LAUNCH_ARGS+=("$tok")
+  done < <(kind_flag_tokens "$kind" "$field" "$model" "$effort")
+}
+
 build_launch_args() {
   local role="$1" kind="$2"
   local model effort flags
@@ -103,22 +130,21 @@ build_launch_args() {
   flags="$(cfg_launch_flags "$role")"
 
   LAUNCH_ARGS=()
-  case "$kind" in
-    claude)
-      [ -n "$model" ]  && LAUNCH_ARGS+=(--model "$model")
-      [ -n "$effort" ] && LAUNCH_ARGS+=(--effort "$effort")
-      ;;
-    codex)
-      [ -n "$model" ]  && LAUNCH_ARGS+=(--model "$model")
-      [ -n "$effort" ] && LAUNCH_ARGS+=(-c "model_reasoning_effort=$effort")
-      ;;
-    *)
-      if [ -n "$model$effort" ]; then
-        note "! $role: kind '$kind' の model/effort フラグ対応を持っていないので無視した。"
-        note "  必要なら launch_flags にその agent のフラグを直接書くこと"
+  if kind_flags_known "$kind"; then
+    if [ -n "$model" ] && [ -n "$effort" ] && kind_has_combined "$kind"; then
+      # effort を独立フラグではなく model id の suffix として渡す agent（omp 等）
+      append_kind_flags "$kind" combined "$model" "$effort"
+    else
+      [ -n "$model" ]  && append_kind_flags "$kind" model  "$model" "$effort"
+      [ -n "$effort" ] && append_kind_flags "$kind" effort "$model" "$effort"
+      if [ -n "$effort" ] && kind_has_combined "$kind"; then
+        note "! $role: kind '$kind' は effort を model と一緒にしか渡せないが model が空。effort は無視された"
       fi
-      ;;
-  esac
+    fi
+  elif [ -n "$model$effort" ]; then
+    note "! $role: kind '$kind' の model/effort フラグが config/kind-flags.json に無いので無視した。"
+    note "  '$kind --help' で実フラグを確認して表に足すか、launch_flags に直接書くこと"
+  fi
   # launch_flags はそのまま後ろに足す（空白区切り）
   if [ -n "$flags" ]; then
     local f

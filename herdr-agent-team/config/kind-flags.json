@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "agent kind ごとの「model / effort をどの起動フラグで渡すか」の対応表。",
+    "config/defaults.json が『どのロールが何を使うか』を持つのに対し、こちらは",
+    "『そのツールの CLI がどういうフラグを取るか』という客観的な事実だけを持つ。",
+    "ロールの好みは defaults.json、ツールの語彙はこのファイル、という分担。",
+    "",
+    "各値は argv トークンの配列。`{model}` / `{effort}` が実値に置換される。",
+    "トークンは配列要素のまま herdr agent start ... -- に渡るので、値に空白が入っても",
+    "分割されない。",
+    "",
+    "キーの意味:",
+    "  combined — model と effort の両方が指定されたときに優先して使う形。",
+    "             effort を独立フラグではなく model id の suffix として渡す agent",
+    "             （omp の `provider/model:level` 等）のためにある。",
+    "  model    — model だけを渡す形。combined が無い agent ではこちらと effort を並べる。",
+    "  effort   — effort だけを渡す形。",
+    "",
+    "ここに無い kind は model / effort が無視される（警告が出る）。その agent を",
+    "使いたいときは、`<kind> --help` で実フラグを確認してこの表に1項目足すこと。",
+    "表に足すまでの回避策として launch_flags に直接フラグを書くこともできる。",
+    "",
+    "source には確認元を残す。推測で書かない — 指定が効かなくても起動はしてしまい、",
+    "fallback model のまま動いていることに気付けない（SKILL.md の実測記録を参照）。",
+    "未実測のものは doctor で実機の表示と突き合わせてから信用すること。"
+  ],
+  "kinds": {
+    "claude": {
+      "source": "実測 2026-08",
+      "model": ["--model", "{model}"],
+      "effort": ["--effort", "{effort}"]
+    },
+    "codex": {
+      "source": "実測 2026-08",
+      "model": ["--model", "{model}"],
+      "effort": ["-c", "model_reasoning_effort={effort}"]
+    },
+    "omp": {
+      "source": "未実測 / can1357/oh-my-pi docs/models.md (2026-08): --model は provider/modelId、optional `:thinkingLevel` suffix (off|minimal|low|medium|high|xhigh|max)",
+      "combined": ["--model", "{model}:{effort}"],
+      "model": ["--model", "{model}"]
+    }
+  }
+}

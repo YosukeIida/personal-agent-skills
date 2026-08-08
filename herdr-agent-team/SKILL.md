@@ -130,16 +130,25 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
   いて変えられないので、config と食い違っても `doctor` は「注意」に留める。
 - `kind` は herdr がサポートするもの（`herdr agent --help` の kinds 行で確認）。
   ロールごとに別 kind を混在させてよい。
-- `model` / `effort` は省略可。省略するとその agent の既定に従う。**kind ごとに実フラグへ変換される**
-  （実測で確認、2026-08）:
+- `model` / `effort` は省略可。省略するとその agent の既定に従う。**kind ごとに実フラグへ変換される。**
+  変換表は `config/kind-flags.json` が持つ（スクリプトにハードコードしない）。
 
-  | kind | model | effort |
+  | kind | 生成されるフラグ | 出典 |
   |---|---|---|
-  | `claude` | `--model <m>` | `--effort <level>` |
-  | `codex` | `--model <m>` | `-c model_reasoning_effort=<level>` |
+  | `claude` | `--model <m> --effort <level>` | 実測 2026-08 |
+  | `codex` | `--model <m> -c model_reasoning_effort=<level>` | 実測 2026-08 |
+  | `omp` | `--model <m>:<level>` | 未実測・upstream docs |
 
   codex の effort は引用符なしで `--strict-config` が受理するので、シェル経由でも安全。
-  対応表を持たない kind では警告して無視する（`launch_flags` に直接書くこと）。
+
+  **agent によっては effort が独立フラグではない。** omp は model id の suffix
+  （`provider/model:level`、`off|minimal|low|medium|high|xhigh|max`）で渡す。
+  この形の kind は表に `combined` キーを持ち、model と effort が両方あるときそちらが
+  優先される（model が空だと effort は渡せないので警告する）。
+
+  **新しい agent に乗り換えるときは、この表に1項目足すだけでスクリプトは触らない。**
+  `<kind> --help` で実フラグを確認し、`source` に確認元を書く。表に無い kind は
+  model/effort を警告して無視する（`launch_flags` に直接書けば回避できる）。
   **`effort` の段階の意味は kind をまたいで揃っていない。** 同じ `medium` と書いても
   claude と codex で同じ深さになる保証はないので、ロール単位で調整する前提で扱う。
 - **これらは「そのセッションだけ」の設定で、agent の設定ファイルを書き換えない。**
