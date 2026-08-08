@@ -12,14 +12,16 @@
     "横方向の境界調整（ratio コマンド）の対象から外れ、親と同じ列の幅を共有する。",
     "stack_ratio は縦split時の親:子の比率（省略時 0.5＝50/50）。",
     "ratio の合計チェックは stack_below の無いロールだけを対象にする（縦積みの子は",
-    "列の幅を親と共有するので二重計上しない）。2026-08 cmux での実測比率を既定値にした。",
+    "列の幅を親と共有するので二重計上しない）。design と orchestrator を同幅にしてあるのは、",
+    "人が実際に指示を打つのがこの2つだから（orchestrator は classifier に止められた操作の",
+    "代行や escalation の受け口になる）。右列は見るだけなので狭くてよい。",
     "この既定値を変えると、以後 init するチーム全部に効く。",
     "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
   ],
   "roles": [
-    { "role": "design",         "kind": "claude", "ratio": 0.40, "caller": true, "cwd_from": "host", "resident": "external", "model": "opus", "effort": "high" },
-    { "role": "orchestrator",   "kind": "claude", "ratio": 0.25, "cwd_from": "host", "model": "opus", "effort": "high" },
-    { "role": "implementation", "kind": "claude", "ratio": 0.35, "cwd_from": "implementation", "model": "sonnet", "effort": "medium" },
-    { "role": "review",         "kind": "codex",  "ratio": 0.35, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
+    { "role": "design",         "kind": "claude", "ratio": 0.35, "caller": true, "cwd_from": "host", "resident": "external", "model": "opus", "effort": "high" },
+    { "role": "orchestrator",   "kind": "claude", "ratio": 0.35, "cwd_from": "host", "model": "opus", "effort": "high" },
+    { "role": "implementation", "kind": "codex",  "ratio": 0.30, "cwd_from": "implementation", "model": "gpt-5.6-luna", "effort": "xhigh" },
+    { "role": "review",         "kind": "codex",  "ratio": 0.30, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
   ]
 }

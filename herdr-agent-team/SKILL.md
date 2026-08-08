@@ -109,10 +109,10 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
   "host_repo": "/abs/path",
   "repos": { "host": "/abs", "implementation": "/abs", "review": "/abs" },
   "roles": [
-    { "role": "design", "kind": "claude", "cwd": "/abs", "ratio": 0.40, "caller": true },
-    { "role": "orchestrator", "kind": "claude", "cwd": "/abs", "ratio": 0.25 },
-    { "role": "implementation", "kind": "codex", "cwd": "/abs", "ratio": 0.35 },
-    { "role": "review", "kind": "codex", "cwd": "/abs", "ratio": 0.35, "stack_below": "implementation", "stack_ratio": 0.5 }
+    { "role": "design", "kind": "claude", "cwd": "/abs", "ratio": 0.35, "caller": true },
+    { "role": "orchestrator", "kind": "claude", "cwd": "/abs", "ratio": 0.35 },
+    { "role": "implementation", "kind": "codex", "cwd": "/abs", "ratio": 0.30 },
+    { "role": "review", "kind": "codex", "cwd": "/abs", "ratio": 0.30, "stack_below": "implementation", "stack_ratio": 0.5 }
   ]
 }
 ```
@@ -152,8 +152,13 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
 - `launch_flags`（任意・配列）は `herdr agent start ... -- <flags>` に渡される。
   権限モードは**起動フラグで指定する**こと。起動後に修飾キー送信で切り替えるのは
   信頼できない（shift+tab 等の修飾キー和音は忠実に届かない）。
-- `ratio` はこのモニタ・このフォントサイズ前提の値。変わったら `ratio` サブコマンドで
-  測り直して再適用する。
+- `ratio` は相対値なのでモニタ幅に依らないが、絶対桁数は変わる。既定の 0.35 / 0.35 / 0.30 は
+  195桁の領域で design 68 / orchestrator 68 / 右列 59 になる（実測 2026-08）。承認ダイアログが
+  読める下限はおよそ50桁なので、狭いモニタでは右列から先に破綻する。モニタやフォントサイズを
+  変えたら `ratio` サブコマンドで測り直して再適用する。
+- **design と orchestrator を同幅にしているのは意図的**。人が実際に指示を打つのはこの2つで、
+  特に orchestrator は permission classifier に止められた操作の代行や escalation の受け口に
+  なる。右列（implementation / review）は基本的に見るだけなので狭くてよい。
 
 ## 配送が submit されないことがある（実測 2026-08）
 
