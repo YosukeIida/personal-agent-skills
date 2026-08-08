@@ -101,12 +101,7 @@ kind_flags_known() {
   jq -e --arg k "$1" '.kinds | has($k)' "$KIND_FLAGS_FILE" >/dev/null 2>&1
 }
 
-# kind が combined 形（effort を model id の suffix で渡す）を持つか
-kind_has_combined() {
-  jq -e --arg k "$1" '.kinds[$k] | has("combined")' "$KIND_FLAGS_FILE" >/dev/null 2>&1
-}
-
-# <kind> <combined|model|effort> <model> <effort> → argv トークンを1行ずつ出す
+# <kind> <model|effort> <model値> <effort値> → argv トークンを1行ずつ出す
 kind_flag_tokens() {
   jq -r --arg k "$1" --arg f "$2" --arg m "$3" --arg e "$4" \
     '(.kinds[$k][$f] // [])
@@ -131,16 +126,8 @@ build_launch_args() {
 
   LAUNCH_ARGS=()
   if kind_flags_known "$kind"; then
-    if [ -n "$model" ] && [ -n "$effort" ] && kind_has_combined "$kind"; then
-      # effort を独立フラグではなく model id の suffix として渡す agent（omp 等）
-      append_kind_flags "$kind" combined "$model" "$effort"
-    else
-      [ -n "$model" ]  && append_kind_flags "$kind" model  "$model" "$effort"
-      [ -n "$effort" ] && append_kind_flags "$kind" effort "$model" "$effort"
-      if [ -n "$effort" ] && kind_has_combined "$kind"; then
-        note "! $role: kind '$kind' は effort を model と一緒にしか渡せないが model が空。effort は無視された"
-      fi
-    fi
+    [ -n "$model" ]  && append_kind_flags "$kind" model  "$model" "$effort"
+    [ -n "$effort" ] && append_kind_flags "$kind" effort "$model" "$effort"
   elif [ -n "$model$effort" ]; then
     note "! $role: kind '$kind' の model/effort フラグが config/kind-flags.json に無いので無視した。"
     note "  '$kind --help' で実フラグを確認して表に足すか、launch_flags に直接書くこと"
