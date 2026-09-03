@@ -1,4 +1,0 @@
-interface:
-  display_name: "悪文ライティング"
-  short_description: "『悪文』にもとづく日本語文章の診断・推敲・改稿支援"
-  default_prompt: "$akubun-writing を使って、この日本語文を『悪文』の観点から診断し、問題点と改稿案を出してください。"
