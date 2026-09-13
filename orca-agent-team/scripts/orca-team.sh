@@ -12,6 +12,7 @@ set -euo pipefail
 CONFIG_DIR="${ORCA_TEAM_CONFIG_DIR:-$HOME/.config/orca-agent-team}"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
+TOPOLOGY_ONLY=0
 TEAM=""
 CFG=""
 RUN_ID=""
@@ -198,6 +199,17 @@ set_session_layer() {
       --mode herdr-only --write --format json )
 }
 
+# 旧 role-pane-mapping.json が残っていると domain 内の全チームが invalid になる
+# （0.31.0 で互換読み取りが削除された）。退役は新形式の記録が先に要る。
+check_legacy_topology() {
+  local f="$HOST_REPO/.intent-cli/role-pane-mapping.json"
+  [ -f "$f" ] || return 0
+  warn "旧形式の topology が残っている: $f"
+  warn "  この domain の全チームが invalid になる。新形式を記録した今なら退役できる:"
+  warn "  cd $HOST_REPO && intent-cli session-layer topology retire-legacy \\"
+  warn "    --domain $DOMAIN --team $TEAM --evidence <理由> --confirm-retire-legacy --write"
+}
+
 validate_topology() {
   has_intent_cli || return 0
   local out
@@ -258,6 +270,20 @@ cmd_up() {
 
   local caller r kind model effort wt cwd handle cmd created prev_host=""
   caller="$(caller_role)"
+
+  # 移行用: 端末も agent も触らず、intent-cli 側の記録だけを作る。
+  # 旧 role-pane-mapping.json からの移行は「新形式を記録してから retire-legacy」
+  # の順序が必要で、そのために agent を起動せず記録だけ作りたい場面がある。
+  if [ "$TOPOLOGY_ONLY" = 1 ]; then
+    info "--topology-only: 端末の作成と agent の起動を skip する"
+    record_topology
+    record_wake_commands
+    record_host_state
+    set_session_layer
+    check_legacy_topology
+    validate_topology
+    return 0
+  fi
 
   while read -r r; do
     kind="$(role_field "$r" kind)"
@@ -417,6 +443,7 @@ main() {
       --impl-repo) impl_repo="$2"; shift 2 ;;
       --kind|--model|--effort) overrides+=("${1#--}:$2"); shift 2 ;;
       --dry-run)   DRY_RUN=1; shift ;;
+      --topology-only) TOPOLOGY_ONLY=1; shift ;;
       -h|--help)   usage; exit 0 ;;
       *) die "不明なオプション: $1" ;;
     esac
