@@ -81,13 +81,13 @@ handle_alive() {
   orca terminal show --terminal "$1" --json 2>/dev/null | jq -e '.ok == true' >/dev/null 2>&1
 }
 remember_handle() {
-  local role="$1" handle="$2" created="$3" f; f="$(term_state)"
+  local role="$1" handle="$2" created="$3" launched="${4:-false}" f; f="$(term_state)"
   [ "$DRY_RUN" = 1 ] && return 0
   mkdir -p "$CONFIG_DIR"
   [ -f "$f" ] || printf '{"team":"%s","roles":{}}\n' "$TEAM" > "$f"
   local tmp; tmp="$(mktemp)"
-  jq --arg r "$role" --arg h "$handle" --argjson c "$created" \
-     '.roles[$r] = {handle: $h, created_by_skill: $c}' "$f" > "$tmp" && mv "$tmp" "$f"
+  jq --arg r "$role" --arg h "$handle" --argjson c "$created" --argjson l "$launched" \
+     '.roles[$r] = {handle: $h, created_by_skill: $c, agent_launched: $l}' "$f" > "$tmp" && mv "$tmp" "$f"
 }
 
 # kind-flags.json を引いて起動コマンド文字列を組む。値は @sh で quoting する。
@@ -290,7 +290,7 @@ cmd_up() {
   info "impl: $IMPL_REPO"
   ensure_run
 
-  local caller r kind model effort wt cwd handle cmd created prev_host=""
+  local caller r kind model effort wt cwd handle cmd
   caller="$(caller_role)"
 
   # このセッションが host worktree にいるかを判定する。
@@ -335,46 +335,31 @@ cmd_up() {
       info "$r: caller 席（このセッション自身）$handle"
       run orca terminal rename --terminal "$handle" --title "$r" --json >/dev/null 2>&1 || true
       remember_handle "$r" "$handle" false
-      prev_host="$handle"
       continue
     fi
 
     handle="$(known_handle "$r")"
     if handle_alive "$handle"; then
       info "$r: 既存の端末を再利用 $handle"
-      [ "$wt" = "host" ] && prev_host="$handle"
       continue
     fi
 
     cmd="$(launch_command "$kind" "$model" "$effort")"
-    if [ "$wt" = "host" ] && [ -n "$prev_host" ]; then
-      # host worktree は1タブを split して1画面に3席並べる。
-      # orca-cli skill は horizontal を左右分割と説明しているが、実機では上下に
-      # 並んだ（2026-09-14 実測）。左右に並べるには vertical を渡す。
-      info "$r: host タブを split ($cmd)"
-      if [ "$DRY_RUN" = 1 ]; then
-        printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction vertical\033[0m\n' "$prev_host"
-        handle="<new-$r>"
-      else
-        handle="$(orca terminal split --terminal "$prev_host" --direction vertical \
-          --json 2>/dev/null | extract_handle)"
-        [ -n "$handle" ] || die "$r: terminal split に失敗した"
-      fi
-      prev_host="$handle"
+    # 1席1タブ。ペイン分割はしない。
+    # 3席を1タブに split すると各ペインが 250px 程度になり、単語が分断されて
+    # 実用にならない（2026-09-14 に実機で確認）。herdr 版も「worker pane を
+    # 細くしすぎない、実用下限およそ48桁」を規定していた。画面幅は
+    # 4席 × 48桁 = 192桁を要求するが、読めるフォントサイズでは成立しない。
+    # 席同士の視覚的同居は agent には不要で（委譲は notify 経由、他席の画面は
+    # terminal read で読める）、人間が見る必要のある承認待ちは doctor が拾う。
+    info "$r: $wt worktree にタブを作成 ($cmd)"
+    if [ "$DRY_RUN" = 1 ]; then
+      printf '\033[90m    [dry-run] orca terminal create --worktree path:%s --title %s\033[0m\n' "$cwd" "$r"
+      handle="<new-$r>"
     else
-      # host の1席目（split 元がまだ無い場合）と、impl worktree の席はここで作る。
-      # impl を別タブにするのはサンドボックス境界のため。
-      info "$r: $wt worktree に端末を作成 ($cmd)"
-      if [ "$DRY_RUN" = 1 ]; then
-        printf '\033[90m    [dry-run] orca terminal create --worktree path:%s --title %s\033[0m\n' "$cwd" "$r"
-        handle="<new-$r>"
-      else
-        handle="$(orca terminal create --worktree "path:$cwd" --title "$r" \
-          --json 2>/dev/null | extract_handle)"
-        [ -n "$handle" ] || die "$r: terminal create に失敗した"
-      fi
-      # host の1席目はこれ以降の split 元になる。設定しないと2席目も別タブになる。
-      [ "$wt" = "host" ] && prev_host="$handle"
+      handle="$(orca terminal create --worktree "path:$cwd" --title "$r" \
+        --json 2>/dev/null | extract_handle)"
+      [ -n "$handle" ] || die "$r: terminal create に失敗した"
     fi
     launch_agent "$r" "$handle" "$cmd"
     run orca terminal rename --terminal "$handle" --title "$r" --json >/dev/null 2>&1 || true
@@ -391,6 +376,33 @@ cmd_up() {
 }
 
 # ---------------------------------------------------------------- status
+
+# ----------------------------------------------------------------- adopt
+
+# 人間が UI で並べた端末を席として取り込む。
+# orca の CLI はタブ「領域」の分割を持たない（terminal split はタブ内のペイン分割、
+# tab コマンドはブラウザ用）。複数のタブ領域を横に並べるのは UI 操作でしかできず、
+# visualLayouts も読み取り専用で null が返る。したがってレイアウトは人間が作り、
+# skill はその結果を role に対応づける。herdr 版が adopt を持っていたのと同じ理由。
+#
+# 取り込んだ席は created_by_skill=false として記録するので、down は閉じない。
+cmd_adopt() {
+  local pairs=("$@")
+  [ "${#pairs[@]}" -gt 0 ] || die "--map <role>=<handle> を1つ以上指定する（handle は \`orca terminal list\` で確認）"
+  step "orca-agent-team adopt: $TEAM"
+  local p role handle
+  for p in "${pairs[@]}"; do
+    [ -n "$p" ] || continue
+    role="${p%%=*}"; handle="${p#*=}"
+    [ "$role" != "$p" ] || die "--map の形式は <role>=<handle>: $p"
+    roles | grep -qx "$role" || die "設定に無いロール: $role"
+    handle_alive "$handle" || die "$role: 端末が見つからない ($handle)"
+    info "$role: $handle を取り込む"
+    run orca terminal rename --terminal "$handle" --title "$role" --json >/dev/null 2>&1 || true
+    remember_handle "$role" "$handle" false
+  done
+  info "取り込み完了。agent の起動と topology の記録は \`up\` が行う"
+}
 
 cmd_status() {
   step "orca-agent-team status: $TEAM"
@@ -478,7 +490,7 @@ EOF
 main() {
   local sub="${1:-}"; shift || true
   local domain="" host_repo="" impl_repo=""
-  local overrides=()
+  local overrides=() maps=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --team)      TEAM="$2"; shift 2 ;;
@@ -486,6 +498,7 @@ main() {
       --host-repo) host_repo="$2"; shift 2 ;;
       --impl-repo) impl_repo="$2"; shift 2 ;;
       --kind|--model|--effort) overrides+=("${1#--}:$2"); shift 2 ;;
+      --map)       maps+=("$2"); shift 2 ;;
       --dry-run)   DRY_RUN=1; shift ;;
       --topology-only) TOPOLOGY_ONLY=1; shift ;;
       -h|--help)   usage; exit 0 ;;
@@ -497,6 +510,7 @@ main() {
 
   case "$sub" in
     init)   cmd_init "$domain" "$host_repo" "$impl_repo" ${overrides+"${overrides[@]}"} ;;
+    adopt)  require_env; load_config; cmd_adopt ${maps+"${maps[@]}"} ;;
     up)     require_env; load_config; cmd_up ;;
     status) require_env; load_config; cmd_status ;;
     down)   require_env; load_config; cmd_down ;;
