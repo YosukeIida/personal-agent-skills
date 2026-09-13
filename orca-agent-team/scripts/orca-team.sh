@@ -13,6 +13,7 @@ CONFIG_DIR="${ORCA_TEAM_CONFIG_DIR:-$HOME/.config/orca-agent-team}"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 TOPOLOGY_ONLY=0
+CALLER_IN_HOST=0
 TEAM=""
 CFG=""
 RUN_ID=""
@@ -104,7 +105,28 @@ launch_command() {
   printf '%s%s' "$kind" "$flags"
 }
 
-extract_handle() { jq -r '.result.terminal.handle // .result.handle // empty'; }
+extract_handle() { jq -r '.result.terminal.handle // .result.split.handle // .result.handle // empty'; }
+
+# agent は `terminal create --command` では起動しない。TUI agent を --command に渡すと
+# orca が "Timed out waiting for terminal handle after creation" で失敗し、端末も
+# 残らない（2026-09-14 実測。素の claude でも再現、echo なら成功）。
+# 端末を先に作り、対話シェルにコマンドを打ち込んで起動する。herdr 版が codex について
+# 同じ結論に達していた（シェル経由でないと wrapper が適用されない）。
+launch_agent() {
+  local role="$1" handle="$2" cmd="$3"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '\033[90m    [dry-run] orca terminal send --terminal %s --text %q --enter --wait-submit 15\033[0m\n' "$handle" "$cmd"
+    return 0
+  fi
+  local out warn
+  out="$(orca terminal send --terminal "$handle" --text "$cmd" --enter --wait-submit 15 --json 2>/dev/null)" || true
+  if [ "$(jq -r '.ok // false' <<<"$out")" != "true" ]; then
+    warn "$role: 起動コマンドの送信に失敗した（端末を見て手で起動すること）"
+    return 0
+  fi
+  warn="$(jq -r '.result.warnings[]? // empty' <<<"$out" | head -1)"
+  [ -z "$warn" ] || info "$role: $warn"
+}
 
 # ------------------------------------------------------------------- run
 
@@ -271,6 +293,18 @@ cmd_up() {
   local caller r kind model effort wt cwd handle cmd created prev_host=""
   caller="$(caller_role)"
 
+  # このセッションが host worktree にいるかを判定する。
+  local here
+  here="$(orca terminal show --terminal "$ORCA_TERMINAL_HANDLE" --json 2>/dev/null \
+    | jq -r '.result.terminal.worktreePath // empty')"
+  if [ "$here" = "$HOST_REPO" ]; then
+    CALLER_IN_HOST=1
+  else
+    CALLER_IN_HOST=0
+    warn "このセッションは host worktree にいない（現在: ${here:-不明}）"
+    warn "  '$caller' も新しい端末として作る。既にどこかで動いている席があれば down してから実行すること"
+  fi
+
   # 移行用: 端末も agent も触らず、intent-cli 側の記録だけを作る。
   # 旧 role-pane-mapping.json からの移行は「新形式を記録してから retire-legacy」
   # の順序が必要で、そのために agent を起動せず記録だけ作りたい場面がある。
@@ -292,7 +326,11 @@ cmd_up() {
     wt="$(role_field "$r" worktree)"
     [ "$wt" = "impl" ] && cwd="$IMPL_REPO" || cwd="$HOST_REPO"
 
-    if [ "$r" = "$caller" ]; then
+    # caller 席は「このセッション自身」に割り当てる。ただしそれが成立するのは
+    # このセッションが host worktree にいるときだけ。別の worktree から実行された
+    # 場合に流用すると、席が誤った cwd に置かれる（端末の worktree は変えられない）。
+    # その場合は caller 扱いをやめ、通常の席として新しい端末を作る。
+    if [ "$r" = "$caller" ] && [ "$CALLER_IN_HOST" = 1 ]; then
       handle="$ORCA_TERMINAL_HANDLE"
       info "$r: caller 席（このセッション自身）$handle"
       run orca terminal rename --terminal "$handle" --title "$r" --json >/dev/null 2>&1 || true
@@ -310,29 +348,33 @@ cmd_up() {
 
     cmd="$(launch_command "$kind" "$model" "$effort")"
     if [ "$wt" = "host" ] && [ -n "$prev_host" ]; then
-      # host worktree は caller のタブを横に split して1画面に並べる。
-      info "$r: host タブを split して起動 ($cmd)"
+      # host worktree は1タブを横に split して1画面に並べる。
+      info "$r: host タブを split ($cmd)"
       if [ "$DRY_RUN" = 1 ]; then
-        printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction horizontal --command %q\033[0m\n' "$prev_host" "$cmd"
+        printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction horizontal\033[0m\n' "$prev_host"
         handle="<new-$r>"
       else
         handle="$(orca terminal split --terminal "$prev_host" --direction horizontal \
-          --command "$cmd" --json 2>/dev/null | extract_handle)"
+          --json 2>/dev/null | extract_handle)"
         [ -n "$handle" ] || die "$r: terminal split に失敗した"
       fi
       prev_host="$handle"
     else
-      # impl worktree は別タブ。サンドボックス境界のため host と分ける。
-      info "$r: $wt worktree に端末を作って起動 ($cmd)"
+      # host の1席目（split 元がまだ無い場合）と、impl worktree の席はここで作る。
+      # impl を別タブにするのはサンドボックス境界のため。
+      info "$r: $wt worktree に端末を作成 ($cmd)"
       if [ "$DRY_RUN" = 1 ]; then
-        printf '\033[90m    [dry-run] orca terminal create --worktree path:%s --title %s --command %q\033[0m\n' "$cwd" "$r" "$cmd"
+        printf '\033[90m    [dry-run] orca terminal create --worktree path:%s --title %s\033[0m\n' "$cwd" "$r"
         handle="<new-$r>"
       else
         handle="$(orca terminal create --worktree "path:$cwd" --title "$r" \
-          --command "$cmd" --json 2>/dev/null | extract_handle)"
+          --json 2>/dev/null | extract_handle)"
         [ -n "$handle" ] || die "$r: terminal create に失敗した"
       fi
+      # host の1席目はこれ以降の split 元になる。設定しないと2席目も別タブになる。
+      [ "$wt" = "host" ] && prev_host="$handle"
     fi
+    launch_agent "$r" "$handle" "$cmd"
     run orca terminal rename --terminal "$handle" --title "$r" --json >/dev/null 2>&1 || true
     remember_handle "$r" "$handle" true
   done < <(roles)
