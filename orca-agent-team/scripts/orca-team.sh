@@ -348,13 +348,15 @@ cmd_up() {
 
     cmd="$(launch_command "$kind" "$model" "$effort")"
     if [ "$wt" = "host" ] && [ -n "$prev_host" ]; then
-      # host worktree は1タブを横に split して1画面に並べる。
+      # host worktree は1タブを split して1画面に3席並べる。
+      # orca-cli skill は horizontal を左右分割と説明しているが、実機では上下に
+      # 並んだ（2026-09-14 実測）。左右に並べるには vertical を渡す。
       info "$r: host タブを split ($cmd)"
       if [ "$DRY_RUN" = 1 ]; then
-        printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction horizontal\033[0m\n' "$prev_host"
+        printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction vertical\033[0m\n' "$prev_host"
         handle="<new-$r>"
       else
-        handle="$(orca terminal split --terminal "$prev_host" --direction horizontal \
+        handle="$(orca terminal split --terminal "$prev_host" --direction vertical \
           --json 2>/dev/null | extract_handle)"
         [ -n "$handle" ] || die "$r: terminal split に失敗した"
       fi
