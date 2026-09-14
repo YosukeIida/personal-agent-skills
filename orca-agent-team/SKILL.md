@@ -14,23 +14,61 @@ description: >-
 intent-cli の四ロール席を orca に配備する。**席を立てるところまで**が責務で、
 そこで何をするかは `intent-cli guide ...` に従う。
 
-## 配置
+## 配置：1席1タブ。ペイン分割はしない
 
 ```
-host worktree（1タブ・3ペイン）              impl チェックアウト（別タブ）
-┌──────────┬──────────────┬──────────┐      ┌────────────────┐
-│  design  │ orchestrator │  review  │      │ implementation │
-└──────────┴──────────────┴──────────┘      └────────────────┘
-   ↑ caller（このセッション自身）
-   ↑ host-state ロール（.git を触る作業を担う非サンドボックス席）
+host worktree のタブ                        impl チェックアウトのタブ
+┌────────┬──────────────┬────────┐         ┌────────────────┐
+│ design │ orchestrator │ review │         │ implementation │
+└────────┴──────────────┴────────┘         └────────────────┘
+        （タブとして並ぶ。同時表示はしない）
 ```
 
-- **review を host に置く**のは、review の実作業が委譲で渡される
-  `.intent-cli/worktrees/review-<unit>` で行われ、impl のチェックアウトに常駐する
-  必要がないため。design の出力もレビューする（G789）ので同じ画面にある方がよい。
-- **implementation だけ分ける**のはサンドボックス境界のため。実装席は host
-  routing-root への書き込み権限を持たない。
-- orca ではタブが worktree スコープなので、2つの worktree を1画面には並べられない。
+design が host-state ロール（`.git` を触る作業を担う非サンドボックス席）。
+
+**review を host に置く**のは、review の実作業が委譲で渡される
+`.intent-cli/worktrees/review-<unit>` で行われ、impl のチェックアウトに常駐する
+必要がないため。**implementation だけ分ける**のはサンドボックス境界のため
+（実装席は host routing-root への書き込み権限を持たない）。
+
+### なぜペイン分割をしないか（2026-09-14 の実測に基づく決定）
+
+**① 分割するとサイズが歪み、直す手段が無い。**
+`orca terminal split` に比率指定が無く、`pane resize` 相当のコマンドも存在しない
+（全234コマンドを確認）。分割は常に現ペインを半分に割るので、3回割ると
+1/2・1/4・1/8 になる。分割後の自動均等化すら未実装
+（[#18077](https://github.com/stablyai/orca/issues/18077) は open・コメント0）。
+herdr 版が `ratio` サブコマンドと `min_pane_cols` を持てたのは
+`pane split --ratio` / `pane resize --amount` があったからで、orca にはその層が無い。
+
+**② 分割すると agent の状態が見えなくなる。**
+orca は agent の状態をタブ名に出す（`✳` `◐` や `Working` の接頭辞）。
+`orca terminal show` は `connected` / `lastOutputAt` / `preview` しか返さず、
+`agentStatus` に相当するフィールドを持たない
+（[#12844](https://github.com/stablyai/orca/issues/12844) は open・反応ゼロ）。
+つまりタブ名が CLI から読める唯一の状態情報で、ペインに分けると4席ぶんが1つに潰れる。
+
+**③ 1席1タブなら完全自動になる。**
+`terminal create` と `terminal send` はどちらも CLI で動くため人手ゼロで立つ。
+
+### タブ領域の左右分割は CLI から作れない
+
+複数のタブ領域を横に並べる操作は UI 専用で、試した手段はすべて失敗した：
+
+| 手段 | 結果 |
+|---|---|
+| CLI にタブ領域の分割コマンド | 存在しない（全234コマンド確認済み） |
+| `computer click --element-index`（`Split Terminal Right` / `Pane Actions`） | `ok: true` を返すが作動しない |
+| `computer drag`（タブを右端へ、座標指定） | `ok: true` を返すが作動しない |
+| `computer press-key` / `hotkey` | **作動する**（キー入力だけは効く） |
+
+Electron の web content に対して AXPress も合成ドラッグも通らない。
+キー入力は効くので、[#10055](https://github.com/stablyai/orca/issues/10055)
+（tab-level split のショートカット、実装済み PR #10076 がマージ待ち）が入れば
+`computer hotkey` で自動化できる。
+
+人間が UI で並べた場合は `adopt` で取り込む。**タブをドラッグしてもハンドルは
+変わらない**ので、一度並べれば `up` は既存席を再利用し、レイアウトは維持される。
 
 ## 配送
 
@@ -57,6 +95,14 @@ bash $S init --team <name> --domain <domain> \
 
 # 2. 配備する（冪等。2回目以降は生きている席を再利用する）
 bash $S up --team <name> [--dry-run]
+
+# 2'. intent-cli 側の記録だけ作る（端末も agent も触らない）
+#     旧 role-pane-mapping.json からの移行に使う。retire-legacy は
+#     新形式の記録が先に存在することを要求するため。
+bash $S up --team <name> --topology-only
+
+# 2''. 人間が UI で並べた端末を席として取り込む
+bash $S adopt --team <name> --map <role>=<handle> [--map ...]
 
 # 3. 状態を見る
 bash $S status --team <name>

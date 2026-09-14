@@ -377,62 +377,7 @@ cmd_up() {
 
 # ---------------------------------------------------------------- status
 
-# ---------------------------------------------------------------- layout
-
-# 1タブの中に入れ子 split で4席分のペインを作る。
-#
-#   design │ review │ orchestrator
-#                    ├─────────────
-#                    │ implementation
-#
-# herdr-agent-team と同じ配置（右列を上下に分ける）。
-# 向きは実測に従う: vertical が左右、horizontal が上下（orca-cli skill の説明とは逆）。
-#
-# タブ「領域」自体の分割は CLI から作れないが、入れ子 split なら同じ見た目になる。
-# UI 側の Split Terminal Right は computer click が ok を返しても作動しない
-# （Electron の web content では AXPress が効かない。2026-09-14 実測）。
-#
-# implementation のペインは host worktree に属することになるので、agent の起動前に
-# impl チェックアウトへ cd する。external 席の topology は cwd を記録しないため
-# （reader / frontend / wake_command のみ）、worktree の帰属がずれても配送に影響しない。
-cmd_layout() {
-  local base
-  base="$(known_handle "$(caller_role)")"
-  handle_alive "$base" || die "起点となる席が無い。先に \`up\` で1席目を作るか \`adopt\` で取り込む"
-
-  step "1タブ内に4ペインを組む（起点: $(caller_role) ${base}）"
-  local h2 h3 h4
-  h2="$(split_from "$base" vertical   "review")"
-  h3="$(split_from "$h2"   vertical   "orchestrator")"
-  h4="$(split_from "$h3"   horizontal "implementation")"
-
-  remember_handle review         "$h2" true
-  remember_handle orchestrator   "$h3" true
-  remember_handle implementation "$h4" true
-
-  local r cmd cwd
-  for r in review orchestrator implementation; do
-    cmd="$(launch_command "$(role_field "$r" kind)" "$(role_field "$r" model)" "$(role_field "$r" effort)")"
-    [ "$(role_field "$r" worktree)" = "impl" ] && cmd="cd $(printf '%q' "$IMPL_REPO") && $cmd"
-    launch_agent "$r" "$(known_handle "$r")" "$cmd"
-  done
-  info "完了。topology の記録は \`up\` が行う"
-}
-
-split_from() {
-  local from="$1" dir="$2" label="$3" h
-  if [ "$DRY_RUN" = 1 ]; then
-    printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction %s  (%s)\033[0m\n' "$from" "$dir" "$label" >&2
-    printf '<new-%s>' "$label"; return 0
-  fi
-  h="$(orca terminal split --terminal "$from" --direction "$dir" --json 2>/dev/null | extract_handle)"
-  [ -n "$h" ] || die "$label: split に失敗した"
-  orca terminal rename --terminal "$h" --title "$label" --json >/dev/null 2>&1 || true
-  printf '  %s: %s に %s 分割 → %s\n' "$label" "$from" "$dir" "$h" >&2
-  printf '%s' "$h"
-}
-
-# ----------------------------------------------------------------- adopt
+# ---------------------------------------------------------------- adopt
 
 # 人間が UI で並べた端末を席として取り込む。
 # orca の CLI はタブ「領域」の分割を持たない（terminal split はタブ内のペイン分割、
@@ -566,7 +511,6 @@ main() {
   case "$sub" in
     init)   cmd_init "$domain" "$host_repo" "$impl_repo" ${overrides+"${overrides[@]}"} ;;
     adopt)  require_env; load_config; cmd_adopt ${maps+"${maps[@]}"} ;;
-    layout) require_env; load_config; cmd_layout ;;
     up)     require_env; load_config; cmd_up ;;
     status) require_env; load_config; cmd_status ;;
     down)   require_env; load_config; cmd_down ;;
