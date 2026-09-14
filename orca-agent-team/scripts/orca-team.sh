@@ -14,6 +14,7 @@ SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 TOPOLOGY_ONLY=0
 CALLER_IN_HOST=0
+CLOSE_TERMINALS=0
 TEAM=""
 CFG=""
 RUN_ID=""
@@ -76,9 +77,13 @@ known_created_by_skill() {
   [ -f "$f" ] || { printf 'false'; return 0; }
   jq -r --arg r "$1" '.roles[$r].created_by_skill // false' "$f" 2>/dev/null || printf 'false'
 }
+# 端末が使える状態か。`.ok` はハンドルが既知であることしか示さないので、
+# `connected` まで見る。閉じた端末も show 自体は ok を返し、
+# connected:false として残る（2026-09-15 実測）。
 handle_alive() {
   [ -n "${1:-}" ] || return 1
-  orca terminal show --terminal "$1" --json 2>/dev/null | jq -e '.ok == true' >/dev/null 2>&1
+  orca terminal show --terminal "$1" --json 2>/dev/null \
+    | jq -e '.ok == true and .result.terminal.connected == true' >/dev/null 2>&1
 }
 remember_handle() {
   local role="$1" handle="$2" created="$3" launched="${4:-false}" f; f="$(term_state)"
@@ -106,6 +111,45 @@ launch_command() {
 }
 
 extract_handle() { jq -r '.result.terminal.handle // .result.split.handle // .result.handle // empty'; }
+
+# 端末の中で agent が動いているか。orca は agent の状態を CLI に出さない
+# （terminal show は connected / lastOutputAt / preview のみ。upstream #12844）ので、
+# 画面末尾がシェルプロンプトかどうかで判定する。
+# プロンプトで終わっていれば agent は居ない、それ以外なら TUI が占有していると見る。
+agent_running() {
+  local h="$1" tail
+  tail="$(orca terminal read --terminal "$h" --screen --json 2>/dev/null \
+    | jq -r '.result.terminal.tail[]?' | grep -vE '^[[:space:]]*$' | tail -1)"
+  [ -n "$tail" ] || return 1
+  case "$tail" in
+    *'$ '|*'> '|*'% '|*'# '|*'>'|*'$'|*'%') return 1 ;;
+  esac
+  return 0
+}
+
+# agent を終了させて端末はシェルに戻す。端末は閉じない。
+# claude / codex とも /exit で抜ける。応じない場合は interrupt を2回送る
+# （herdr 版が /exit → Enter → Ctrl+C ×2 のチェーンを必要としたのと同じ事情）。
+stop_agent() {
+  local role="$1" handle="$2" i
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '\033[90m    [dry-run] orca terminal send --terminal %s --text /exit --enter\033[0m\n' "$handle"
+    return 0
+  fi
+  agent_running "$handle" || { info "$role: agent は動いていない"; return 0; }
+  orca terminal send --terminal "$handle" --text "/exit" --enter --wait-submit 8 --json >/dev/null 2>&1 || true
+  for i in 1 2 3 4 5 6; do
+    sleep 2
+    agent_running "$handle" || { info "$role: agent を終了した（端末は保持）"; return 0; }
+  done
+  warn "$role: /exit に応じないので interrupt を送る"
+  orca terminal send --terminal "$handle" --interrupt --json >/dev/null 2>&1 || true
+  sleep 2
+  orca terminal send --terminal "$handle" --interrupt --json >/dev/null 2>&1 || true
+  sleep 3
+  agent_running "$handle" && warn "$role: まだ終了していない（端末を見て手で止める）" \
+                          || info "$role: agent を終了した（端末は保持）"
+}
 
 # agent は `terminal create --command` では起動しない。TUI agent を --command に渡すと
 # orca が "Timed out waiting for terminal handle after creation" で失敗し、端末も
@@ -290,7 +334,7 @@ cmd_up() {
   info "impl: $IMPL_REPO"
   ensure_run
 
-  local caller r kind model effort wt cwd handle cmd
+  local caller r kind model effort wt cwd handle cmd base_role base_handle
   caller="$(caller_role)"
 
   # このセッションが host worktree にいるかを判定する。
@@ -338,28 +382,52 @@ cmd_up() {
       continue
     fi
 
+    cmd="$(launch_command "$kind" "$model" "$effort")"
+    [ "$wt" = "impl" ] && cmd="cd $(printf '%q' "$IMPL_REPO") && $cmd"
+
+    # 端末が生きていれば作り直さない。agent だけ止まっている場合は起動し直す。
+    # 端末を閉じるとタブ領域のレイアウトが失われるため、端末は使い回して
+    # agent だけを入れ替えるのが基本方針（§レイアウトの維持を参照）。
     handle="$(known_handle "$r")"
     if handle_alive "$handle"; then
-      info "$r: 既存の端末を再利用 $handle"
+      if agent_running "$handle"; then
+        info "$r: 稼働中の席を再利用 $handle"
+      else
+        info "$r: 端末は生存・agent 停止中 → 起動する ($cmd)"
+        launch_agent "$r" "$handle" "$cmd"
+      fi
       continue
     fi
 
-    cmd="$(launch_command "$kind" "$model" "$effort")"
-    # 1席1タブ。ペイン分割はしない。
-    # 3席を1タブに split すると各ペインが 250px 程度になり、単語が分断されて
-    # 実用にならない（2026-09-14 に実機で確認）。herdr 版も「worker pane を
-    # 細くしすぎない、実用下限およそ48桁」を規定していた。画面幅は
-    # 4席 × 48桁 = 192桁を要求するが、読めるフォントサイズでは成立しない。
-    # 席同士の視覚的同居は agent には不要で（委譲は notify 経由、他席の画面は
-    # terminal read で読める）、人間が見る必要のある承認待ちは doctor が拾う。
-    info "$r: $wt worktree にタブを作成 ($cmd)"
-    if [ "$DRY_RUN" = 1 ]; then
-      printf '\033[90m    [dry-run] orca terminal create --worktree path:%s --title %s\033[0m\n' "$cwd" "$r"
-      handle="<new-$r>"
+    # split_from があれば、その席の端末を分割して同じタブ領域に並べる。
+    # 2席1組に限っているのは、orca の split が常に現ペインを半分に割り、
+    # 比率を指定する手段が無いため。2分割なら必ず 1:1 になり歪まない。
+    # 3席を1タブに入れると 1/2・1/4・1/4 になり使いものにならない（実機で確認）。
+    base_role="$(role_field "$r" split_from)"
+    base_handle=""
+    [ -n "$base_role" ] && base_handle="$(known_handle "$base_role")"
+
+    if [ -n "$base_handle" ] && handle_alive "$base_handle"; then
+      info "$r: $base_role の領域を分割 ($cmd)"
+      if [ "$DRY_RUN" = 1 ]; then
+        printf '\033[90m    [dry-run] orca terminal split --terminal %s --direction vertical\033[0m\n' "$base_handle"
+        handle="<new-$r>"
+      else
+        handle="$(orca terminal split --terminal "$base_handle" --direction vertical \
+          --json 2>/dev/null | extract_handle)"
+        [ -n "$handle" ] || die "$r: terminal split に失敗した"
+      fi
     else
-      handle="$(orca terminal create --worktree "path:$cwd" --title "$r" \
-        --json 2>/dev/null | extract_handle)"
-      [ -n "$handle" ] || die "$r: terminal create に失敗した"
+      [ -z "$base_role" ] || warn "$r: split 元の '$base_role' が無いので独立タブにする"
+      info "$r: $wt worktree にタブを作成 ($cmd)"
+      if [ "$DRY_RUN" = 1 ]; then
+        printf '\033[90m    [dry-run] orca terminal create --worktree path:%s --title %s\033[0m\n' "$cwd" "$r"
+        handle="<new-$r>"
+      else
+        handle="$(orca terminal create --worktree "path:$cwd" --title "$r" \
+          --json 2>/dev/null | extract_handle)"
+        [ -n "$handle" ] || die "$r: terminal create に失敗した"
+      fi
     fi
     launch_agent "$r" "$handle" "$cmd"
     run orca terminal rename --terminal "$handle" --title "$r" --json >/dev/null 2>&1 || true
@@ -411,8 +479,9 @@ cmd_status() {
   while read -r r; do
     handle="$(known_handle "$r")"
     if [ -z "$handle" ]; then state="未配備"
-    elif handle_alive "$handle"; then state="alive"
-    else state="\033[31mdead\033[0m"; fi
+    elif ! handle_alive "$handle"; then state="\033[31m端末なし\033[0m"
+    elif agent_running "$handle"; then state="\033[32magent 稼働\033[0m"
+    else state="\033[33m端末のみ（agent 停止）\033[0m"; fi
     printf "  %-16s %-10s %-8s %-38s $state\n" \
       "$r" "$(role_field "$r" kind)" "$(role_field "$r" worktree)" "${handle:--}"
   done < <(roles)
@@ -423,21 +492,37 @@ cmd_status() {
 
 # ------------------------------------------------------------------ down
 
+# 既定では agent だけ終了し、端末は残す。
+# 端末を閉じるとタブ領域のレイアウトが失われ、CLI では作り直せない
+# （タブ領域の分割コマンドが無く、computer の入力系も Orca には届かない）。
+# claude / codex の更新を取り込むには agent の再起動で足りるので、
+# 日常の停止はこちらを使う。
+#
+# --close-terminals を渡したときだけ端末ごと閉じる。レイアウトは失われる。
 cmd_down() {
-  step "orca-agent-team down: ${TEAM}（この skill が作った端末のみ閉じる）"
   local r handle
-  while read -r r; do
-    handle="$(known_handle "$r")"
-    [ -n "$handle" ] || continue
-    if [ "$(known_created_by_skill "$r")" != "true" ]; then
-      info "$r: caller 席なので閉じない"
-      continue
-    fi
-    handle_alive "$handle" || { info "$r: 既に停止している"; continue; }
-    info "$r: 閉じる $handle"
-    run orca terminal close --terminal "$handle" --json >/dev/null 2>&1 || warn "$r: close に失敗"
-  done < <(roles)
-  info "topology と Run は残してある（再配備は up）"
+  if [ "$CLOSE_TERMINALS" = 1 ]; then
+    step "orca-agent-team down: ${TEAM}（端末ごと閉じる → レイアウトは失われる）"
+    warn "タブ領域の配置は CLI で作り直せない。次回 up の後に手で並べ直すことになる"
+    while read -r r; do
+      handle="$(known_handle "$r")"
+      [ -n "$handle" ] || continue
+      [ "$(known_created_by_skill "$r")" = "true" ] || { info "$r: caller 席なので閉じない"; continue; }
+      handle_alive "$handle" || { info "$r: 既に停止している"; continue; }
+      info "$r: 閉じる $handle"
+      run orca terminal close --terminal "$handle" --json >/dev/null 2>&1 || warn "$r: close に失敗"
+    done < <(roles)
+  else
+    step "orca-agent-team down: ${TEAM}（agent のみ終了・端末とレイアウトは保持）"
+    while read -r r; do
+      handle="$(known_handle "$r")"
+      [ -n "$handle" ] || continue
+      handle_alive "$handle" || { info "$r: 端末が無い"; continue; }
+      stop_agent "$r" "$handle"
+    done < <(roles)
+    info "次回は \`up\` で同じ端末に agent を起動し直す（更新はここで取り込まれる）"
+  fi
+  info "topology と Run は残してある"
 }
 
 # ---------------------------------------------------------------- doctor
@@ -501,6 +586,7 @@ main() {
       --map)       maps+=("$2"); shift 2 ;;
       --dry-run)   DRY_RUN=1; shift ;;
       --topology-only) TOPOLOGY_ONLY=1; shift ;;
+      --close-terminals) CLOSE_TERMINALS=1; shift ;;
       -h|--help)   usage; exit 0 ;;
       *) die "不明なオプション: $1" ;;
     esac

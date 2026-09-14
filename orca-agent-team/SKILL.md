@@ -14,15 +14,28 @@ description: >-
 intent-cli の四ロール席を orca に配備する。**席を立てるところまで**が責務で、
 そこで何をするかは `intent-cli guide ...` に従う。
 
-## 配置：1席1タブ。ペイン分割はしない
+## 配置：2席1組。1組が1つのタブ領域を等分する
 
 ```
-host worktree のタブ                        impl チェックアウトのタブ
-┌────────┬──────────────┬────────┐         ┌────────────────┐
-│ design │ orchestrator │ review │         │ implementation │
-└────────┴──────────────┴────────┘         └────────────────┘
-        （タブとして並ぶ。同時表示はしない）
+タブ領域1（1:1）              タブ領域2（1:1）
+┌──────────┬──────────┐      ┌──────────────┬────────────────┐
+│  design  │  review  │      │ orchestrator │ implementation │
+└──────────┴──────────┘      └──────────────┴────────────────┘
 ```
+
+`config/defaults.json` の `split_from` が組を決める。review は design の端末から、
+implementation は orchestrator の端末から split する。
+
+**2席1組に限るのが要点。** orca の split は常に現ペインを半分に割り、比率を指定する
+手段が無い（`pane resize` 相当のコマンドも存在しない）。2分割なら必ず 1:1 になるが、
+3席を1タブに入れると 1/2・1/4・1/4 になって使いものにならない（2026-09-15 実測）。
+
+組み合わせの根拠：
+
+- **design ↔ review** — G789 が「review 席は design の出力もレビューする」と規定
+- **orchestrator ↔ implementation** — 委譲する側と受ける側
+
+タブ領域そのものは2つ必要で、これは人間が初回に UI で用意する（下記）。
 
 design が host-state ロール（`.git` を触る作業を担う非サンドボックス席）。
 
@@ -31,9 +44,8 @@ design が host-state ロール（`.git` を触る作業を担う非サンドボ
 必要がないため。**implementation だけ分ける**のはサンドボックス境界のため
 （実装席は host routing-root への書き込み権限を持たない）。
 
-### なぜペイン分割をしないか（2026-09-14 の実測に基づく決定）
+### 3席以上を1タブに入れない理由（2026-09-15 の実測）
 
-**① 分割するとサイズが歪み、直す手段が無い。**
 `orca terminal split` に比率指定が無く、`pane resize` 相当のコマンドも存在しない
 （全234コマンドを確認）。分割は常に現ペインを半分に割るので、3回割ると
 1/2・1/4・1/8 になる。分割後の自動均等化すら未実装
@@ -41,15 +53,17 @@ design が host-state ロール（`.git` を触る作業を担う非サンドボ
 herdr 版が `ratio` サブコマンドと `min_pane_cols` を持てたのは
 `pane split --ratio` / `pane resize --amount` があったからで、orca にはその層が無い。
 
-**② 分割すると agent の状態が見えなくなる。**
+2分割に限れば比率制御が不要になる、というのがこの設計の要。
+
+### agent の状態は領域ごとに1つしか見えない
+
 orca は agent の状態をタブ名に出す（`✳` `◐` や `Working` の接頭辞）。
 `orca terminal show` は `connected` / `lastOutputAt` / `preview` しか返さず、
 `agentStatus` に相当するフィールドを持たない
 （[#12844](https://github.com/stablyai/orca/issues/12844) は open・反応ゼロ）。
-つまりタブ名が CLI から読める唯一の状態情報で、ペインに分けると4席ぶんが1つに潰れる。
 
-**③ 1席1タブなら完全自動になる。**
-`terminal create` と `terminal send` はどちらも CLI で動くため人手ゼロで立つ。
+2席1組なので、タブ名から読めるのは各領域の片方だけになる。もう片方の状態は
+`doctor` が画面を読んで判定する（承認待ち・利用上限の検出は実測済み）。
 
 ### タブ領域の左右分割は CLI から作れない
 
@@ -69,6 +83,41 @@ Electron の web content に対して AXPress も合成ドラッグも通らな�
 
 人間が UI で並べた場合は `adopt` で取り込む。**タブをドラッグしてもハンドルは
 変わらない**ので、一度並べれば `up` は既存席を再利用し、レイアウトは維持される。
+
+### レイアウトを壊さずに agent を入れ替える
+
+claude / codex の更新を取り込むには agent の再起動で足りる。端末を閉じると
+タブ領域が消えて CLI では作り直せないため、**既定の `down` は agent だけを終了し
+端末は残す**。`/exit` を送り、応じなければ interrupt を2回送る。
+
+```bash
+bash $S down --team <name>    # agent のみ終了。端末とレイアウトは残る
+bash $S up   --team <name>    # 同じ端末に agent を起動し直す（更新はここで入る）
+```
+
+端末ごと閉じたいときだけ `--close-terminals` を渡す。レイアウトは失われる。
+
+`up` は端末の生存と agent の稼働を別々に見る。端末が生きていて agent だけ
+止まっていれば、その端末で起動し直す。`status` もこの2つを区別して表示する。
+
+### ブラウザ経由で UI を操作できる（2026-09-15 の発見）
+
+Orca はランタイムサーバ（既定 6768 番）で web UI を配信しており、
+**ブラウザ自動化なら UI のボタンが実際に作動する**。`Split Terminal Right` の
+クリックで端末が増えることを実測した。
+
+合成入力が効かない経路との対比：
+
+| 経路 | 結果 |
+|---|---|
+| `orca computer` の click / drag / hotkey / type-text | **Orca に届かない**（`ok:true` は発行の意味） |
+| AppleScript の `keystroke` | 届かない |
+| AppleScript の System Events 読み取り | 動くが、対象要素が間欠的にしか現れない |
+| **ブラウザ自動化（agent-browser）** | **作動する** |
+
+ただし web UI にタブ領域の分割は見当たらない（タブに `draggable` が無く、
+`New tab` メニューは New Terminal / New Browser Tab のみ）。ペイン分割までは
+ブラウザ経由でも可能。
 
 ## 配送
 

@@ -14,6 +14,14 @@
     "",
     "caller: true の席はこのセッション自身の端末に割り当てられ、agent を起動しない。",
     "",
+    "split_from: この席を、指定したロールの端末から split して作る（同じタブ領域に並ぶ）。",
+    "  2席1組にしているのは、orca の split が常に現ペインを半分に割り、比率を指定する",
+    "  手段が無いため。2分割なら必ず 1:1 になり歪まない。3席を1タブに入れると",
+    "  1/2・1/4・1/4 になって使いものにならない（2026-09-15 に実機で確認）。",
+    "  組み合わせは design↔review（G789: review は design の出力もレビューする）と",
+    "  orchestrator↔implementation（委譲する側と受ける側）。",
+    "  省略した席は独立したタブとして作られる。",
+    "",
     "kind は orca の topology には記録されない（external 席は --frontend のみ）。",
     "ここが唯一の記録場所になる。",
     "",
@@ -36,6 +44,14 @@
       "effort": "high"
     },
     {
+      "role": "review",
+      "kind": "codex",
+      "worktree": "host",
+      "split_from": "design",
+      "model": "gpt-5.6-sol",
+      "effort": "high"
+    },
+    {
       "role": "orchestrator",
       "kind": "claude",
       "worktree": "host",
@@ -43,16 +59,10 @@
       "effort": "high"
     },
     {
-      "role": "review",
-      "kind": "codex",
-      "worktree": "host",
-      "model": "gpt-5.6-sol",
-      "effort": "high"
-    },
-    {
       "role": "implementation",
       "kind": "codex",
       "worktree": "impl",
+      "split_from": "orchestrator",
       "model": "gpt-5.6-luna",
       "effort": "max"
     }
