@@ -15,13 +15,18 @@
     "列の幅を親と共有するので二重計上しない）。design と orchestrator を同幅にしてあるのは、",
     "人が実際に指示を打つのがこの2つだから（orchestrator は classifier に止められた操作の",
     "代行や escalation の受け口になる）。右列は見るだけなので狭くてよい。",
+    "delivery_method は herdr 席の封筒の渡し方（inline | file-backed）。ここでは書かず、",
+    "record_topology が file-backed を既定にする。file-backed だと notify が封筒を",
+    ".intent-cli/tasks/<domain>/<team>/<task-id>-<nonce>.md へ書いてから1行のポインタだけを",
+    "pane に送るので、長文が pane 入力で欠ける事故を配送層で潰せる。inline に戻したい席だけ",
+    "ここに delivery_method を書く。",
     "この既定値を変えると、以後 init するチーム全部に効く。",
     "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
   ],
   "roles": [
     { "role": "design",         "kind": "claude", "ratio": 0.35, "caller": true, "cwd_from": "host", "resident": "external", "model": "opus", "effort": "high" },
     { "role": "orchestrator",   "kind": "claude", "ratio": 0.35, "cwd_from": "host", "model": "opus", "effort": "high" },
-    { "role": "implementation", "kind": "codex",  "ratio": 0.30, "cwd_from": "implementation", "model": "gpt-5.6-luna", "effort": "xhigh" },
+    { "role": "implementation", "kind": "codex",  "ratio": 0.30, "cwd_from": "implementation", "model": "gpt-5.6-luna", "effort": "max" },
     { "role": "review",         "kind": "codex",  "ratio": 0.30, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
   ]
 }

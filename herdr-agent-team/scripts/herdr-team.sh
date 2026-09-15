@@ -79,6 +79,10 @@ load_config() {
 }
 
 cfg_host_repo() { jq -r '.host_repo' "$CFG"; }
+# intent-cli 0.31.0 は session-layer 系の全サブコマンドで --domain を要求する。
+# 値の正本は host repo の .intent-cli/config.toml なので、init がそこから読んで
+# team 設定に焼き込む（read_domain_from_host 参照）。
+cfg_domain()    { jq -r '.domain // empty' "$CFG"; }
 cfg_roles()     { jq -r '.roles[].role' "$CFG"; }
 cfg_role_field() { jq -r --arg r "$1" --arg f "$2" '.roles[] | select(.role==$r) | .[$f] // empty' "$CFG"; }
 cfg_caller_role() { jq -r '.roles[] | select(.caller==true) | .role' "$CFG"; }
@@ -208,9 +212,28 @@ write_panes_state() { # role|pane_id|created の行を stdin で受ける
 # intent-cli の topology コマンドは `.intent-cli` を持つ cwd（host repo）から実行しないと
 # `missing-host-state` で落ちる。このスキルは任意の cwd から呼ばれる（caller pane が
 # host repo に居るとは限らない）ので、config の host_repo に移って実行する。
+#
+# --domain は 0.31.0 で全サブコマンド必須になった。呼び出し側が毎回書くと
+# 付け忘れが起きるので、ここで一律に足す。
 topology_cmd() {
+  local domain; domain="$(cfg_domain)"
+  [ -n "$domain" ] || { printf 'domain が team 設定に無い。init をやり直すこと\n'; return 1; }
   ( cd "$(cfg_host_repo)" 2>/dev/null || exit 1
-    intent-cli session-layer topology "$@" 2>&1 )
+    intent-cli session-layer topology --domain "$domain" "$@" 2>&1 )
+}
+
+# 記録が無いときの session-layer の既定は agmsg。agmsg はこの環境から撤去済みなので、
+# 明示しないと配送が黙って死ぬ。record_topology の最後で毎回設定する。
+set_session_layer_mode() {
+  local domain out; domain="$(cfg_domain)"
+  out="$( cd "$(cfg_host_repo)" 2>/dev/null || exit 1
+          intent-cli session-layer set --domain "$domain" --team "$TEAM" \
+            --mode herdr-only --write --format json 2>&1 )" || {
+    note "! session-layer を herdr-only に設定できなかった:"
+    note "  $(printf '%s' "$out" | head -3)"
+    return 1
+  }
+  note "session-layer を herdr-only に設定した"
 }
 
 # 配送トポロジーを記録する。**形式の正本は intent-cli 側**（`session-layer topology`）で、
@@ -221,27 +244,41 @@ record_topology() {
     note "intent-cli が無いので配送トポロジーの記録はスキップ（pane 状態は保存済み）"
     return 0
   fi
-  local role resident reader pane cwd kind out rc=0
+  local role resident reader pane cwd kind model effort delivery out rc=0
+  local domain; domain="$(cfg_domain)"
   for role in $(cfg_roles); do
     resident="$(cfg_role_field "$role" resident)"; : "${resident:=herdr}"
+    model="$(cfg_role_field "$role" model)"
+    effort="$(cfg_role_field "$role" effort)"
+    local -a extra=()
+    [ -n "$model" ]  && extra+=(--model "$model")
+    [ -n "$effort" ] && extra+=(--reasoning-effort "$effort")
     if [ "$resident" = external ]; then
       reader="$(cfg_role_field "$role" reader)"
       : "${reader:=.intent-cli/events/${TEAM}.jsonl}"
       out="$(topology_cmd record --team "$TEAM" --role "$role" \
-               --resident external --reader "$reader" --write --format json)" || rc=1
+               --resident external --reader "$reader" \
+               "${extra[@]}" --write --format json)" || rc=1
     else
       pane="$(mapped_pane "$role")"
       if [ -z "$pane" ] || [ "$pane" = "-" ]; then continue; fi
       cwd="$(cfg_role_field "$role" cwd)"
       kind="$(cfg_role_field "$role" kind)"
+      # delivery_method: file-backed だと notify が封筒を
+      # .intent-cli/tasks/<domain>/<team>/<task-id>-<nonce>.md に書いてから
+      # 1行のポインタだけを pane へ送る。長文が pane 入力で欠ける事故
+      # （orca #10416 と同種）を配送層で潰せるので、既定で付ける。
+      delivery="$(cfg_role_field "$role" delivery_method)"
+      : "${delivery:=file-backed}"
       out="$(topology_cmd record --team "$TEAM" --role "$role" \
                --resident herdr --workspace-id "$HERDR_WORKSPACE_ID" --pane-id "$pane" \
-               --cwd "$cwd" --kind "$kind" --write --format json)" || rc=1
+               --cwd "$cwd" --kind "$kind" --delivery-method "$delivery" \
+               "${extra[@]}" --write --format json)" || rc=1
     fi
     # CLI は食い違う記録を fail closed で拒否する。勝手に直さず operator に上げる。
     if printf '%s' "$out" | jq -e '.conflict == true' >/dev/null 2>&1; then
       note "  ! ${role}: 既存の記録と食い違うため intent-cli が拒否した"
-      note "    intent-cli session-layer topology show --team ${TEAM} で現在の記録を確認すること"
+      note "    intent-cli session-layer topology show --domain ${domain} --team ${TEAM} で現在の記録を確認すること"
       rc=1
     fi
   done
@@ -250,6 +287,10 @@ record_topology() {
   else
     note "! 配送トポロジーの記録に問題があった。上の指摘を解消すること"
   fi
+  # 失敗は note で上げるだけにして呼び出し側は止めない（pane は既に立っており、
+  # 記録の修復は operator の作業になるため）。
+  set_session_layer_mode || true
+  return 0
 }
 
 # ---------- サブコマンド: init -----------------------------------------------
@@ -257,12 +298,21 @@ record_topology() {
 HOST_REPO=""
 IMPL_REPO=""
 REVIEW_REPO=""
+DOMAIN=""
 declare -a KIND_OVERRIDES=()
 declare -a RATIO_OVERRIDES=()
 declare -a MODEL_OVERRIDES=()
 declare -a EFFORT_OVERRIDES=()
 
 abspath() { ( cd "$1" 2>/dev/null && pwd ) || die "ディレクトリが存在しない: $1"; }
+
+# domain の正本は host repo の .intent-cli/config.toml の [project] domain。
+# ここから読むことで、--domain の打ち間違いで intent-cli 側と食い違うのを防ぐ。
+read_domain_from_host() {
+  local f="$1/.intent-cli/config.toml"
+  [ -f "$f" ] || return 1
+  sed -n 's/^[[:space:]]*domain[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1
+}
 
 # リポジトリ固有のパスを解決して <config-dir>/<team>.json を生成する。
 # 既定のロール構成・kind・比率は config/defaults.json（全リポジトリ共通）から取る。
@@ -283,19 +333,29 @@ cmd_init() {
   [ "$REVIEW_REPO" != "$IMPL_REPO" ] || \
     note "! review と implementation が同じディレクトリです。ロールの分離が弱くなります（--review-repo で分けられます）"
 
+  if [ -z "$DOMAIN" ]; then
+    DOMAIN="$(read_domain_from_host "$HOST_REPO" || true)"
+    [ -n "$DOMAIN" ] || die "domain を決められない。--domain <name> で渡すか、host repo で
+  intent-cli intent init --domain <name> --target-repo <owner/repo> --write
+を先に実行して .intent-cli/config.toml を用意すること: $HOST_REPO"
+    note "domain を host repo の .intent-cli/config.toml から読んだ: $DOMAIN"
+  fi
+
   mkdir -p "$CONFIG_DIR"
   local out="$CONFIG_DIR/$TEAM.json"
   local tmp; tmp="$(mktemp)"
 
   # 既定値の cwd_from を実パスに解決し、kind / ratio の上書きを適用する
   jq \
-    --arg team "$TEAM" --arg host "$HOST_REPO" --arg impl "$IMPL_REPO" --arg rev "$REVIEW_REPO" \
+    --arg team "$TEAM" --arg domain "$DOMAIN" \
+    --arg host "$HOST_REPO" --arg impl "$IMPL_REPO" --arg rev "$REVIEW_REPO" \
     --argjson kinds "$(printf '%s\n' "${KIND_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
     --argjson ratios "$(printf '%s\n' "${RATIO_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): (.[1]|tonumber)}] | add // {}')" \
     --argjson models "$(printf '%s\n' "${MODEL_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
     --argjson efforts "$(printf '%s\n' "${EFFORT_OVERRIDES[@]:-}" | jq -Rn '[inputs | select(length>0) | split("=") | {(.[0]): .[1]}] | add // {}')" \
     '{
        team: $team,
+       domain: $domain,
        host_repo: $host,
        repos: { host: $host, implementation: $impl, review: $rev },
        roles: [ .roles[] | . as $r |
@@ -309,6 +369,9 @@ cmd_init() {
          + (($models[$r.role] // $r.model)  | if . then {model: .}  else {} end)
          + (($efforts[$r.role] // $r.effort) | if . then {effort: .} else {} end)
          + (if $r.launch_flags then {launch_flags: $r.launch_flags} else {} end)
+         # delivery_method: herdr 席の封筒をファイル経由にするか（既定 file-backed）。
+         # 省略時の値は record_topology 側が持つ。
+         + (if $r.delivery_method then {delivery_method: $r.delivery_method} else {} end)
          # resident: external のロールは pane 宛の送信ではなく events ファイルへの
          # 追記で受け取る。reader はチーム名から決まるのでここで実体化する。
          + (if $r.resident then {resident: $r.resident} else {} end)
@@ -947,7 +1010,7 @@ cmd_doctor() {
         note "  [ok] 配送トポロジー — intent-cli の validate を通過"
       else
         note "  [topology不正] $(printf '%s' "$tv" | jq -r '.summary // "-"')"
-        note "                 intent-cli session-layer topology show --team ${TEAM} で確認し、"
+        note "                 intent-cli session-layer topology show --domain $(cfg_domain) --team ${TEAM} で確認し、"
         note "                 up を再実行して記録し直すこと"
         problems=$((problems+1))
       fi
@@ -1035,6 +1098,7 @@ cmd_down() {
 
 USAGE='使い方:
   herdr-team.sh init   --team <name> [--host-repo P] [--impl-repo P] [--review-repo P]
+                       [--domain <name>]   # 省略時は host repo の .intent-cli/config.toml から読む
                        [--kind <role>=<kind>]... [--ratio <role>=<0.0-1.0>]...
                        [--model <role>=<model>]... [--effort <role>=<level>]...
   herdr-team.sh adopt  --team <name>          # 手で組んだ既存レイアウトを取り込む
@@ -1058,6 +1122,7 @@ while [ $# -gt 0 ]; do
     --host-repo) HOST_REPO="${2:-}"; shift 2 ;;
     --impl-repo) IMPL_REPO="${2:-}"; shift 2 ;;
     --review-repo) REVIEW_REPO="${2:-}"; shift 2 ;;
+    --domain) DOMAIN="${2:-}"; shift 2 ;;
     --ratio) RATIO_OVERRIDES+=("${2:-}"); shift 2 ;;
     --model) MODEL_OVERRIDES+=("${2:-}"); shift 2 ;;
     --effort) EFFORT_OVERRIDES+=("${2:-}"); shift 2 ;;
