@@ -300,10 +300,31 @@ record_topology() {
   else
     note "! 配送トポロジーの記録に問題があった。上の指摘を解消すること"
   fi
+  record_host_state_role || true
   # 失敗は note で上げるだけにして呼び出し側は止めない（pane は既に立っており、
   # 記録の修復は operator の作業になるため）。
   set_session_layer_mode || true
   return 0
+}
+
+# host-state ロールの宣言。これが無いと validate が host-state-role-missing を返し、
+# publish 前の host-state 作業（worktree 操作・label 遷移）ができないチーム扱いになる。
+# 宣言は経路を開くだけで、実際に非サンドボックスの席を用意するのは operator の責任。
+record_host_state_role() {
+  local role env out
+  role="$(jq -r '.host_state_role // empty' "$CFG")"
+  env="$(jq -r '.host_state_envelope // empty' "$CFG")"
+  if [ -z "$role" ] || [ -z "$env" ]; then
+    note "! host_state_role / host_state_envelope が team 設定に無いので宣言を飛ばす"
+    return 1
+  fi
+  out="$(topology_cmd record-host-state --team "$TEAM" --role "$role" \
+           --envelope "$env" --write --format json)" || {
+    note "! host-state ロールを宣言できなかった:"
+    printf '%s\n' "$out" | sed 's/^/    /' | head -5
+    return 1
+  }
+  note "host-state ロールを宣言した: ${role}（envelope=${env}）"
 }
 
 # ---------- サブコマンド: init -----------------------------------------------
@@ -369,6 +390,8 @@ cmd_init() {
     '{
        team: $team,
        domain: $domain,
+       host_state_role: .host_state_role,
+       host_state_envelope: .host_state_envelope,
        host_repo: $host,
        repos: { host: $host, implementation: $impl, review: $rev },
        roles: [ .roles[] | . as $r |
@@ -602,10 +625,13 @@ cmd_up() {
       pane="$HERDR_PANE_ID"; created=false
       note "$role: caller pane $pane を割り当て（agent は起動しない）"
       # agent を起動しないロールには logical role 名が付かない。名前が無い agent は
-      # notify の宛先解決から漏れる（「logical role が見つからない」で fail closed）ため、
-      # rename だけは caller にも当てる。
+      # pane 宛の配送から漏れるので rename を当てておく。ただし caller が
+      # resident: external なら reader ファイルで受け取るため、pane に agent が
+      # 居ない状態（rename が通らない状態）が正常。その場合は黙って進む。
       if [ "$DRY_RUN" != 1 ]; then
+        local caller_resident; caller_resident="$(cfg_role_field "$role" resident)"
         herdr agent rename "$pane" "$(agent_ident "$role")" >/dev/null 2>&1 \
+          || [ "$caller_resident" = external ] \
           || note "  ! caller pane の rename に失敗（notify の宛先解決から漏れる可能性）"
         # pane label（UI 表示用、agent identity とは別物）も非 caller ロールと同様に付ける。
         # これを忘れると label が null のままになり、UI は agent kind（例: "claude"）に
@@ -907,13 +933,19 @@ cmd_doctor() {
     # intent-cli の宛先解決は --team/--role/--pane-id の topology 記録で行われ、
     # herdr 側のこの名前とは無関係（record_topology 参照）。
     # ここでの比較は「このスキルが割り当てた herdr identity が生きているか」の自己整合性チェック。
-    local agent_name want_ident
-    want_ident="$(agent_ident "$role")"
-    agent_name="$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)"
-    if [ "$agent_name" != "$want_ident" ]; then
-      note "  [role名なし] $role ($pane) — agent の herdr identity が「${agent_name:-未設定}」（期待値: ${want_ident}）"
-      note "               この状態では宛先解決から漏れる。修復: herdr agent rename $pane $want_ident"
-      problems=$((problems+1))
+    # resident: external の席は reader ファイルで受け取るので、herdr の agent 名を
+    # 持たない状態が正常（topology の delivery_target_kind が reader になる）。
+    # caller 席もここに入る想定で、pane に agent が居ないことを指摘しない。
+    local agent_name want_ident resident_cfg
+    resident_cfg="$(cfg_role_field "$role" resident)"; : "${resident_cfg:=herdr}"
+    if [ "$resident_cfg" != external ]; then
+      want_ident="$(agent_ident "$role")"
+      agent_name="$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)"
+      if [ "$agent_name" != "$want_ident" ]; then
+        note "  [role名なし] $role ($pane) — agent の herdr identity が「${agent_name:-未設定}」（期待値: ${want_ident}）"
+        note "               この状態では宛先解決から漏れる。修復: herdr agent rename $pane $want_ident"
+        problems=$((problems+1))
+      fi
     fi
 
     if [ "$role" = "$caller_role" ]; then

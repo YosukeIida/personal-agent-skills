@@ -28,5 +28,14 @@
     { "role": "orchestrator",   "kind": "claude", "ratio": 0.35, "cwd_from": "host", "model": "opus", "effort": "high" },
     { "role": "implementation", "kind": "codex",  "ratio": 0.30, "cwd_from": "implementation", "model": "gpt-5.6-luna", "effort": "max" },
     { "role": "review",         "kind": "codex",  "ratio": 0.30, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
-  ]
+  ],
+
+  "_host_state_comment": [
+    "host-state ロール: .git を触る作業（worktree の作成・削除、issue publish、label 遷移）を",
+    "担う非サンドボックス席。宣言が無いと topology validate が host-state-role-missing を返す。",
+    "guide は orchestrator を『依頼して検証する側』と規定しているので design を充てる。",
+    "envelope 名は宣言の識別子で、intent-cli は中身を検証しない（capability は別途 operator が担保する）。"
+  ],
+  "host_state_role": "design",
+  "host_state_envelope": "herdr-host-state"
 }
