@@ -285,9 +285,11 @@ record_topology() {
       note "  ! ${role}: 既存の記録と食い違うため intent-cli が拒否した"
       note "    intent-cli session-layer topology show --domain ${domain} --team ${TEAM} で現在の記録を確認すること"
       rc=1
-    elif ! printf '%s' "$out" | jq -e '.applied == true' >/dev/null 2>&1; then
+    elif ! printf '%s' "$out" | jq -e 'has("applied")' >/dev/null 2>&1; then
       # JSON ですらない応答（引数の形が違う等）はここに落ちる。握り潰すと
       # 「記録に問題があった」としか出ず原因が見えないので、本文をそのまま出す。
+      # applied の真偽では判定しない — 同じ値の再記録は applied:false /
+      # already_recorded:true を返す正常系だから（実測）。
       note "  ! ${role}: 記録できなかった。intent-cli の応答:"
       printf '%s\n' "$out" | sed 's/^/      /' | head -5
       rc=1
