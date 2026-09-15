@@ -215,11 +215,16 @@ write_panes_state() { # role|pane_id|created の行を stdin で受ける
 #
 # --domain は 0.31.0 で全サブコマンド必須になった。呼び出し側が毎回書くと
 # 付け忘れが起きるので、ここで一律に足す。
+#
+# 置き場所に注意: --domain はサブコマンドより**後**に置く。前に出すと
+# `Unknown session-layer topology subcommand '--domain'` で落ちる（実測 0.31.0）。
 topology_cmd() {
-  local domain; domain="$(cfg_domain)"
+  local domain sub
+  domain="$(cfg_domain)"
   [ -n "$domain" ] || { printf 'domain が team 設定に無い。init をやり直すこと\n'; return 1; }
+  sub="$1"; shift
   ( cd "$(cfg_host_repo)" 2>/dev/null || exit 1
-    intent-cli session-layer topology --domain "$domain" "$@" 2>&1 )
+    intent-cli session-layer topology "$sub" --domain "$domain" "$@" 2>&1 )
 }
 
 # 記録が無いときの session-layer の既定は agmsg。agmsg はこの環境から撤去済みなので、
@@ -279,6 +284,12 @@ record_topology() {
     if printf '%s' "$out" | jq -e '.conflict == true' >/dev/null 2>&1; then
       note "  ! ${role}: 既存の記録と食い違うため intent-cli が拒否した"
       note "    intent-cli session-layer topology show --domain ${domain} --team ${TEAM} で現在の記録を確認すること"
+      rc=1
+    elif ! printf '%s' "$out" | jq -e '.applied == true' >/dev/null 2>&1; then
+      # JSON ですらない応答（引数の形が違う等）はここに落ちる。握り潰すと
+      # 「記録に問題があった」としか出ず原因が見えないので、本文をそのまま出す。
+      note "  ! ${role}: 記録できなかった。intent-cli の応答:"
+      printf '%s\n' "$out" | sed 's/^/      /' | head -5
       rc=1
     fi
   done
