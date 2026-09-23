@@ -57,7 +57,7 @@ description: |
 3. **査読・調査レポート**（`research_report.md` 等）
 4. **仕様・理論メモ**（`spec.md`, `theory*.md` 等）── PoC段階で中心
 5. **PoC / 実装コード**（`demo.py`, `src/` 等）── PoC段階で中心
-6. **プロジェクト説明**（`CLAUDE.md`）
+6. **プロジェクト説明**（`AGENTS.md`）
 
 ---
 
