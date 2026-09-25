@@ -120,10 +120,10 @@ HTML では `.layer-map` を使う。層の色は indigo → teal → amber の�
 
 ## footer
 
-作成日、対応する md（HTML 側）、視覚設計規約へのリンクを置く。
+作成日と視覚設計規約へのリンクを置く。
 
 ```html
 <footer>
-  作成日: YYYY-MM-DD / 対応する md: <a href="YYYYMMDD_xxx.md">…</a> / 視覚設計: <a href="../DESIGN.md">DESIGN.md</a>
+  作成日: YYYY-MM-DD / 視覚設計: <a href="../DESIGN.md">DESIGN.md</a>
 </footer>
 ```

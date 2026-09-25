@@ -57,7 +57,7 @@ gh skill install YosukeIida/personal-agent-skills commit --agent claude-code --s
 | [herdr](herdr/SKILL.md) | Control herdr from inside it — manage workspaces, tabs, panes, agents via a local unix socket |
 | [install-skill](install-skill/SKILL.md) | Install a Claude Code `.skill` file into dotfiles |
 | [latex-devkit](latex-devkit/SKILL.md) | latex-devkit を使って LaTeX を Docker でビルドする |
-| [math-study-note](math-study-note/SKILL.md) | 研究の数理（測定設計・定理・手法の破れ）を、数式を追って理解できる学習用ノート（md 正本 + KaTeX 図解 HTML）に再構成する |
+| [math-study-note](math-study-note/SKILL.md) | 研究の数理（測定設計・定理・手法の破れ）を、数式を追って理解できる学習用ノート（md か KaTeX 図解 HTML のどちらか1本）に再構成する |
 | [overleaf-review-fetch](overleaf-review-fetch/SKILL.md) | Overleaf プロジェクトのレビューパネル（インラインコメント）を取得して Markdown として保存する |
 | [research-study-guide](research-study-guide/SKILL.md) | 研究プロジェクトの成果物から、分野を知らない学生向けの学習用教材ドキュメント群を MD ファイルで生成する |
 | [twscrape](twscrape/SKILL.md) | X（旧 Twitter）の GraphQL API をスクレイプして検索・ユーザー情報・タイムライン等を取得する |

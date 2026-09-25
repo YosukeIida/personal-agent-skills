@@ -12,7 +12,7 @@ description: >
   ※原稿の文章推敲や論文本体の執筆は対象外（別の執筆系 skill が担当）。
 ---
 
-# 数理の学習用ノート（md + 図解 HTML）
+# 数理の学習用ノート（md または図解 HTML）
 
 ## このスキルが解く問題
 
@@ -25,12 +25,12 @@ description: >
 
 ## 成果物
 
-| ファイル | 役割 |
-|---|---|
-| `notes/YYYYMMDD_<topic>_study_note.md` | **正本**。数式・表・参照マップ。git diff で追える |
-| `notes/YYYYMMDD_<topic>_study_note.html` | 図解版。KaTeX で数式描画、図は HTML/CSS で組む |
+次のどちらか1本（選び方は Phase 2）。作った1本がそのノートの正本になる。
 
-md を先に作り、合意が取れてから HTML にする。**md が正本**で、数式を直すときは md 側を直す。
+| ファイル | 中身 |
+|---|---|
+| `notes/YYYYMMDD_<topic>_study_note.md` | 数式・表・参照マップ。git diff で追える |
+| `notes/YYYYMMDD_<topic>_study_note.html` | 図解版。KaTeX で数式描画、図は HTML/CSS で組む |
 
 ## ワークフロー
 
@@ -81,7 +81,7 @@ Phase 0 の結論は「本ノートで新しく明文化するもの」として
 HTML を選ぶ場合は `references/structure.md` の節構成をそのまま使う。数式の厳密性ルール
 （後述）はどちらでも守る。**数式を含む図は SVG にしない**（後述）。
 
-### Phase 4: 検証
+### Phase 3: 検証
 
 ```bash
 # repo にノート規約チェッカーがあれば必ず通す（例）
