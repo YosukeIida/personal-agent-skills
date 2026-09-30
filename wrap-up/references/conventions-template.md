@@ -1,6 +1,6 @@
 # CONVENTIONS — experience/ のレコード規約
 
-設計の正: artifact「experience/」＋ `docs/experience-migration-plan-2026-08-28.md`。
+設計の正: artifact「experience/」＋ `docs/2026-08-28_experience-migration-plan.md`。
 
 ## 構造
 
