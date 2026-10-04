@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "orca-agent-team の既定の席。絶対パスは持たない（init が repo を解決して <team>.json を作る）。",
+    "1席1タブ。タブの名前は title（省略時は role）。",
+    "design は caller: このセッション自身が座り、agent を起動しない。",
+    "orchestrator は up が立てるふつうのタブ（orca の worker にはしない）。",
+    "  orca の入れ子の worker は既定で1段までなので、orchestrator を worker にすると",
+    "  その下に worker を作れない（nested_worker_depth_exceeded。2026-09-28 実測）。",
+    "implementation / review は orchestrator が立てる席。仕事は worker-start --terminal で1件ずつ渡す。",
+    "account は omp の --profile、codex の cx（personal / labteam）。claude では無視する。",
+    "codex: Orca 1.4.218 + codex 0.160.0 で、cx の後に -c で effort を渡しても worker-start が ready になる",
+    "  （2026-10-04 実測。9 月の embedded mode の時間切れは解消）。omp 18.4.x は Orca が状態をつかめず席にできない。"
+  ],
+  "roles": [
+    { "role": "design",         "title": "plan",           "caller": true },
+    { "role": "orchestrator",   "title": "orchestration",  "kind": "claude", "model": "opus",        "effort": "high" },
+    { "role": "implementation", "title": "implementation", "kind": "codex",  "model": "gpt-6.1-sol", "effort": "max", "account": "labteam" },
+    { "role": "review",         "title": "review",         "kind": "codex",  "model": "gpt-6.1-sol", "effort": "max", "account": "labteam" }
+  ]
+}

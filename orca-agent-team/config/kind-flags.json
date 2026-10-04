@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "kind ごとに model / effort / account / tier をどの起動フラグで渡すか。値は argv トークンの配列で、",
+    "{model} / {effort} / {account} / {tier} が実値に置換される。必ず <kind> --help で確かめてから書く",
+    "（推測で書くと、指定が効かないまま起動してしまい気付けない）。",
+    "account_before は、アカウントをフラグでなく agent の前に走らせるコマンドで切り替える kind 用（`<コマンド> && <kind> …` になる）。"
+  ],
+  "kinds": {
+    "claude": {
+      "source": "claude --help（2026-09-14）",
+      "model": [
+        "--model",
+        "{model}"
+      ],
+      "effort": [
+        "--effort",
+        "{effort}"
+      ]
+    },
+    "omp": {
+      "source": "omp --help（2026-09-28。omp 17.x: --model は fuzzy match、--thinking は off|minimal|low|medium|high|xhigh|max|auto、--profile は認証とセッションを分ける）",
+      "model": [
+        "--model",
+        "{model}"
+      ],
+      "effort": [
+        "--thinking",
+        "{effort}"
+      ],
+      "account": [
+        "--profile",
+        "{account}"
+      ]
+    },
+    "codex": {
+      "source": "codex --help・codex debug models（2026-10-04。codex-cli 0.160.0: -m はモデルの slug、effort は -c model_reasoning_effort。アカウントは dotfiles の cx 関数が CODEX_HOME を切り替える）。tier は -c service_tier（codex debug models の additional_speed_tiers が \"fast\"。2026-10-05。不正な値でもエラーにならないので、効いたかは TUI の表示で確かめる）",
+      "model": [
+        "-m",
+        "{model}"
+      ],
+      "effort": [
+        "-c",
+        "model_reasoning_effort=\"{effort}\""
+      ],
+      "account_before": [
+        "cx",
+        "{account}"
+      ],
+      "tier": [
+        "-c",
+        "service_tier=\"{tier}\""
+      ]
+    }
+  }
+}
