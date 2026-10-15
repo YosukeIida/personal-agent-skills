@@ -5,7 +5,8 @@ description: >
   締めて」「今日の判断をまとめて」などで発動。また、経験知の索引に「未 wrap-up のセッションが
   N 件ある」という通知が出ていて user が「やる」と答えたときにも発動する。
   セッション中に user が下した判断を理由・前提つきで抽出し、user のレビューを経て
-  experience/（$EXPERIENCE_DIR）へ昇格させる。project の HANDOVER.md 更新も担う。
+  experience/（$EXPERIENCE_DIR）へ昇格させる。repo をまたぐ理解は knowledge（$KNOWLEDGE_DIR）に
+  書く。project の HANDOVER.md 更新も担う。
 ---
 
 # wrap-up — セッションの判断を経験知に昇格させる
@@ -41,8 +42,16 @@ YosukeIida/dotfiles の claude/hooks/）と併せて、この skill だけで他
    ファイル移動**で昇格。reject は削除
 6. **supersede 照合**: 新レコードが既存レコードと矛盾しないか grep で確認。矛盾したら
    旧レコードを `archive/` へ移し、新レコードの frontmatter に `supersedes:` を書く
-7. **queue 消し込み**: 処理したセッションの行を `$EXPERIENCE_DIR/.queue.tsv` から削除する
-8. **報告**: 昇格 N 件・reject N 件・supersede N 件を1行ずつ列挙する
+7. **knowledge の手入れ**（`$KNOWLEDGE_DIR` が設定されているときだけ。規約は
+   `$KNOWLEDGE_DIR/CONVENTIONS.md` が正で、先に読む）: このセッションで分かった、repo を
+   またいで使う理解を概念ノートに書くか書き直す。repo の外の作業なら作業記録も書く。
+   user の判断は、agent の行動を変えるものは 2〜6 の経験知へ、テーマについての考えは
+   概念ノートの判断の欄へ振り分ける。index.md を更新して上限を超えていないか確かめ、
+   commit する（knowledge は事後の監査なので、ここでは user の承認を待たない）
+8. **queue 消し込み**: 処理したセッションの行を `$EXPERIENCE_DIR/.queue.tsv` から削除する
+9. **報告**: 昇格 N 件・reject N 件・supersede N 件を1行ずつ列挙する。knowledge は
+   「新しく作ったノート」「結論が逆になったノート」「出典の検査に引っかかったノート」の
+   3つだけを並べる
 
 ## 規律
 
