@@ -46,7 +46,7 @@ YosukeIida/dotfiles の claude/hooks/）と併せて、この skill だけで他
    `$KNOWLEDGE_DIR/CONVENTIONS.md` が正で、先に読む）: このセッションで分かった、repo を
    またいで使う理解を概念ノートに書くか書き直す。repo の外の作業なら作業記録も書く。
    user の判断は、agent の行動を変えるものは 2〜6 の経験知へ、テーマについての考えは
-   概念ノートの判断の欄へ振り分ける。index.md を更新して上限を超えていないか確かめ、
+   概念ノートの判断の欄へ振り分ける。frontmatter の aliases も書き、
    commit する（knowledge は事後の監査なので、ここでは user の承認を待たない）
 8. **queue 消し込み**: 処理したセッションの行を `$EXPERIENCE_DIR/.queue.tsv` から削除する
 9. **報告**: 昇格 N 件・reject N 件・supersede N 件を1行ずつ列挙する。knowledge は
