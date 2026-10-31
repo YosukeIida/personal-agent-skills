@@ -6,7 +6,7 @@ description: >-
   席ごとに kind（claude / codex / omp）・model・effort・アカウント（personal / labteam）を設定で選ぶ。
   「orca でエージェントチームを起動して」「orca でタスクを回して」「orchestrator を立てて」
   「席の状態を見せて」「チームを畳んで」などで使う。
-  ※herdr で動かすチームは herdr-agent-team が、orca の一般操作は orca-cli / orchestration が担当する。
+  ※orca の一般操作は orca-cli / orchestration が担当する。
 ---
 
 # orca-agent-team
