@@ -42,7 +42,7 @@ intent-cli 自身のルールがローカル skill によるワークフロー�
    # 役割ごとにディレクトリを分ける場合（推奨）
    scripts/herdr-team.sh init --team <name> \
      --host-repo <host> --impl-repo <impl> --review-repo <review> \
-     --kind implementation=codex --kind review=codex
+     --kind implementation=codex --kind review=claude
    ```
 
 2. 状態を見る（読み取りのみ、いつでも安全）。
@@ -112,7 +112,7 @@ metadata を持たない実装用ディレクトリに置くと成立しない�
     { "role": "design", "kind": "claude", "cwd": "/abs", "ratio": 0.35, "caller": true },
     { "role": "orchestrator", "kind": "claude", "cwd": "/abs", "ratio": 0.35 },
     { "role": "implementation", "kind": "codex", "cwd": "/abs", "ratio": 0.30 },
-    { "role": "review", "kind": "codex", "cwd": "/abs", "ratio": 0.30, "stack_below": "implementation", "stack_ratio": 0.5 }
+    { "role": "review", "kind": "claude", "cwd": "/abs", "ratio": 0.30, "stack_below": "implementation", "stack_ratio": 0.5 }
   ]
 }
 ```

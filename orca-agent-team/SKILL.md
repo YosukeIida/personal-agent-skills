@@ -47,8 +47,10 @@ orchestrator からの報告は、design のこのセッションに1行で届�
 |---|---|---|---|---|---|
 | design | plan | （このセッション） | | | |
 | orchestrator | orchestration | claude | opus | high | |
-| implementation | implementation | codex | gpt-6.1-sol | max | labteam |
-| review | review | codex | gpt-6.1-sol | max | labteam |
+| implementation | implementation | codex | gpt-6.1-sol | medium | labteam |
+| review | review | claude | opus | high | |
+
+設計とスコープは Claude（Opus）、実装は Codex、レビューは Claude（Opus）が受け持つ。際どいバグは逆順で、Codex が調査し、Claude がセカンドオピニオンを出し、Codex が実装し、Claude がレビューする。実装の model は、公式の Codex の推奨（コードには Sol。Terra はコード向けではない）に従う。
 
 codex の席は `tier=fast` で Fast（`-c service_tier`）にできる。変更は `init --set <role>.<key>=<value>` か、生成された `~/.config/orca-agent-team/<T>.json` を直接編集する。
 kind ごとの起動フラグは `config/kind-flags.json`（**`<kind> --help` で確かめてから足す**）。

@@ -20,14 +20,18 @@
     ".intent-cli/tasks/<domain>/<team>/<task-id>-<nonce>.md へ書いてから1行のポインタだけを",
     "pane に送るので、長文が pane 入力で欠ける事故を配送層で潰せる。inline に戻したい席だけ",
     "ここに delivery_method を書く。",
+    "席の割り当ては、設計とスコープは Claude（Opus）、実装は Codex、レビューは Claude（Opus）。",
+    "Codex は数理・論理で閉じた整合性に強く、Claude は発想とノイズからの信号拾いに強い、という user の経験則に従う。",
+    "実装の model は公式の Codex の推奨（コードには Sol、Terra はコード向けでない）に従い gpt-6.1-sol。",
+    "スコープを Opus が与えるので effort は medium から始め、詰まったら上げる。",
     "この既定値を変えると、以後 init するチーム全部に効く。",
     "個別のチームだけ変えたいときは init のオプションか、生成された設定を直接編集する。"
   ],
   "roles": [
     { "role": "design",         "kind": "claude", "ratio": 0.35, "caller": true, "cwd_from": "host", "resident": "external", "model": "opus", "effort": "high" },
     { "role": "orchestrator",   "kind": "claude", "ratio": 0.35, "cwd_from": "host", "model": "opus", "effort": "high" },
-    { "role": "implementation", "kind": "codex",  "ratio": 0.30, "cwd_from": "implementation", "model": "gpt-5.6-luna", "effort": "max" },
-    { "role": "review",         "kind": "codex",  "ratio": 0.30, "cwd_from": "review", "model": "gpt-5.6-sol", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
+    { "role": "implementation", "kind": "codex",  "ratio": 0.30, "cwd_from": "implementation", "model": "gpt-6.1-sol", "effort": "medium" },
+    { "role": "review",         "kind": "claude", "ratio": 0.30, "cwd_from": "review", "model": "opus", "effort": "high", "stack_below": "implementation", "stack_ratio": 0.5 }
   ],
 
   "_host_state_comment": [
