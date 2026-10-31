@@ -46,9 +46,9 @@ orchestrator からの報告は、design のこのセッションに1行で届�
 | role | タブ | kind | model | effort | account |
 |---|---|---|---|---|---|
 | design | plan | （このセッション） | | | |
-| orchestrator | orchestration | claude | opus | high | |
+| orchestrator | orchestration | claude | opus | medium | |
 | implementation | implementation | codex | gpt-6.1-sol | medium | labteam |
-| review | review | claude | opus | high | |
+| review | review | claude | opus | medium | |
 
 設計とスコープは Claude（Opus）、実装は Codex、レビューは Claude（Opus）が受け持つ。際どいバグは逆順で、Codex が調査し、Claude がセカンドオピニオンを出し、Codex が実装し、Claude がレビューする。実装の model は、公式の Codex の推奨（コードには Sol。Terra はコード向けではない）に従う。
 

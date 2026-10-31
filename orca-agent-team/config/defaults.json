@@ -13,8 +13,8 @@
   ],
   "roles": [
     { "role": "design",         "title": "plan",           "caller": true },
-    { "role": "orchestrator",   "title": "orchestration",  "kind": "claude", "model": "opus",        "effort": "high" },
+    { "role": "orchestrator",   "title": "orchestration",  "kind": "claude", "model": "opus",        "effort": "medium" },
     { "role": "implementation", "title": "implementation", "kind": "codex",  "model": "gpt-6.1-sol", "effort": "medium", "account": "labteam" },
-    { "role": "review",         "title": "review",         "kind": "claude", "model": "opus",        "effort": "high" }
+    { "role": "review",         "title": "review",         "kind": "claude", "model": "opus",        "effort": "medium" }
   ]
 }
