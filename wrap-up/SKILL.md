@@ -33,8 +33,10 @@ YosukeIida/dotfiles の claude/hooks/）と併せて、この skill だけで他
 3. **draft 化**: 各判断を CONVENTIONS.md の書式（判断/Why/前提/確度）で
    `$EXPERIENCE_DIR/drafts/` に書く。frontmatter に `proposed: global | <dir名>` を付ける。
    **前提（drift trigger）が書けない判断はその旨を明示して user に問う**
-4. **user レビュー**: draft を一覧表（名前・判断一行・提案宛先・確度）で提示し、
-   accept / reject / edit を確認する。**無審査で正本に入れない**
+4. **user レビュー**: draft を1件ずつ、名前・提案宛先と、本文の判断・Why・前提・確度をすべて
+   省略せずに示し、それぞれ accept / reject / edit を確認する（判断の一行だけの一覧表で済ませない。
+   user は前提や Why まで読んで採否を決める）。既存レコードの更新を提案するときも、更新後の本文を示す。
+   **無審査で正本に入れない**
    - 宛先は cwd から機械判定しない。横断的な判断は cwd と無関係に global を提案する
    - 昇格判定の目安: 横断2回以上・反例を知らない・一文で言語化できる。
      満たさない単発の学びは reject（捨てる）か、repo の docs/notes 行きを提案する
