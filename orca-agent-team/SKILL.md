@@ -35,6 +35,7 @@ bash $S tell --team <T> --role orchestrator --envelope ~/.config/orca-agent-team
 
 bash $S status --team <T>
 bash $S doctor --team <T>                      # 承認待ち・利用上限を拾う
+bash $S watch --team <T>                       # orchestrator が background で動かす見回り。止まった席を促し、上限・ダイアログ・停止を知らせる
 bash $S down --team <T>                        # この skill が作ったタブを閉じる
 ```
 
@@ -67,6 +68,8 @@ kind ごとの起動フラグは `config/kind-flags.json`（**`<kind> --help` �
 5. **orca を再起動すると handle は変わる。** タブの位置（paneKey）は保たれるので、記録から引き直す。
 6. **ダイアログが出ている端末には送れない。** orca が `agent_prompt_blocked` で止める。回り道はしない。
 7. **非アクティブなタブの承認待ちは見えない。** `doctor` で拾う。承認に自動では答えない。
+8. **worker は報告せずに止まることがある。** GLM（opencode）は作業の途中で手番を終えて入力待ちになった（2026-11-04）。
+   orchestrator は `watch` を background で動かし続け、画面が変わらない席を促し、促しても動かなければ自分で見に行く。
 
 ## この skill が持たないもの
 

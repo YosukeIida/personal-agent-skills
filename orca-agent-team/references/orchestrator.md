@@ -13,6 +13,20 @@ $S run --team <T>      # この端末を coordinator にした Run を作る（�
 $S status --team <T>
 ```
 
+続けて、席の見回りを background で起こす（Claude Code なら `run_in_background`。この端末が閉じるまで動かし続ける）:
+
+```bash
+$S watch --team <T>    # 60 s ごとに仕事中の席の画面を見る
+```
+
+- 画面が 240 s 変わらない席には、続きを促す1行を送る（1件の仕事につき3回まで）。
+- 促しても動かない、利用上限、ダイアログ・承認待ち、入力を受け付けない、のどれかを見つけると、
+  この端末に `[watch] dispatch <id> (<事象>): …` を1行送ってくる。同じ事象は1回だけ送ってくる。
+- `[watch]` が届いたら、その席の画面を読んで判断する: 上限なら account を切り替えずに design に知らせ、
+  別の実装の席があればそちらに渡し直す。ダイアログには勝手に答えず design に知らせる。
+  停止なら、その仕事を abandon して同じ指示書で渡し直すか、design に知らせる。
+- 見回りが落ちていたら（background の task が終わっていたら）、起こし直す。
+
 終わったら design に「準備できた」と1行返す: `$S tell --team <T> --role design --text "orchestrator: ready"`。
 
 ## 2. design からの仕事

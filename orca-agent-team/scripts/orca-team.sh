@@ -2,7 +2,7 @@
 # orca-agent-team — 役割ごとの席を orca のタブに立て、orchestrator が worker として仕事を渡す。
 #
 #   design（このセッション）   : init / up / tell / status / doctor / down
-#   orchestrator（up が立てる）: run / seat / delegate / wait / ack / settle / tell / status / doctor
+#   orchestrator（up が立てる）: run / seat / delegate / wait / ack / settle / tell / status / doctor / watch
 #
 # 持つのは orca の端末と orchestration の機械的な操作だけ。何を委譲するか・どう判断するかは持たない
 # （references/boundaries.md）。
@@ -346,6 +346,62 @@ cmd_down() {
   done
 }
 
+# 仕事中の席を見回る。止まった席には続きを促し、促しても動かない・上限・ダイアログは orchestrator に1回ずつ知らせる。
+# 動いているかは画面の変化で判定する（lastOutputAt は待機中の再描画でも進むので使わない。2026-11-04 opencode で観測）。
+cmd_watch() {
+  local interval=60 quiet=240 nudges=3 once=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --interval) interval="$2"; shift 2 ;; --quiet) quiet="$2"; shift 2 ;;
+      --nudges) nudges="$2"; shift 2 ;; --once) once=1; shift ;;
+      *) die "watch: 不明な引数 $1" ;;
+    esac
+  done
+  load_config
+  local wf; wf="$(team_dir)/watch.json"; mkdir -p "$(team_dir)"; [ -f "$wf" ] || printf '{}\n' > "$wf"
+  local approval='(y/n|\[y/N\]|approve|permission|do you trust|trust this folder|do you want|allow\?|press enter to confirm|enter to confirm|esc to cancel)'
+  local limit='(usage limit|rate limit|quota|limit reached|try again (later|in)|out of credits|to refill)'
+  local nudge='Continue the task in your envelope from where you stopped, until its completion condition is met and you have sent worker_done. Do not stop to describe next steps; do them.'
+  local orch d h tail hash now prev since count
+  wset() { local tmp; tmp="$(mktemp)"; jq "$@" "$wf" > "$tmp" && mv "$tmp" "$wf"; }
+  notify() {  # dispatch event text: orchestrator に同じ事象を2回知らせない
+    jq -e --arg d "$1" --arg e "$2" '.[$d].told[$e] // false' "$wf" >/dev/null && return 0
+    printf '%s watch %s %s: %s\n' "$(date +%H:%M:%S)" "$1" "$2" "$3"
+    orch="$(seat_handle orchestrator 2>/dev/null || true)"
+    if [ -n "$orch" ] && ( send_line "$orch" "[watch] dispatch $1 ($2): $3" ) 2>/dev/null; then
+      wset '.[$d].told[$e] = true' --arg d "$1" --arg e "$2"
+    fi
+  }
+  while :; do
+    now=$(date +%s)
+    while read -r d h; do
+      [ -n "$h" ] || continue
+      tail="$(orca terminal read --terminal "$h" --screen --limit 40 --json 2>/dev/null | jq -r '.result.terminal.tail[]?' || true)"
+      hash="$(printf '%s' "$tail" | shasum | cut -c1-16)"
+      prev="$(jq -r --arg d "$d" '.[$d].hash // ""' "$wf")"
+      if [ "$hash" != "$prev" ]; then
+        wset '.[$d].hash = $x | .[$d].since = ($n | tonumber)' --arg d "$d" --arg x "$hash" --arg n "$now"; continue
+      fi
+      since="$(jq -r --arg d "$d" '.[$d].since' "$wf")"
+      if grep -qiE "$limit" <<<"$tail"; then notify "$d" limit "$h shows a usage limit; do not switch accounts"; continue; fi
+      if grep -qiE "$approval" <<<"$tail"; then notify "$d" dialog "$h shows a dialog or approval; do not answer it blindly"; continue; fi
+      [ $(( now - since )) -ge "$quiet" ] || continue
+      count="$(jq -r --arg d "$d" '.[$d].nudged // 0' "$wf")"
+      if [ "$count" -lt "$nudges" ]; then
+        if ( send_line "$h" "$nudge" ) 2>/dev/null; then
+          printf '%s watch %s nudged %s (%s/%s)\n' "$(date +%H:%M:%S)" "$d" "$h" $((count + 1)) "$nudges"
+          wset '.[$d].nudged = ($c | tonumber) | .[$d].since = ($n | tonumber)' --arg d "$d" --arg c $((count + 1)) --arg n "$now"
+        else notify "$d" unsendable "$h did not accept input; look at its screen"; fi
+      else
+        notify "$d" stalled "$h unchanged for ${quiet}s after $nudges nudges; look at it, then abandon and redelegate or tell design"
+      fi
+    done < <(orca orchestration worker-list --json 2>/dev/null \
+              | jq -r '.result.workers[]? | select(.dispatchStatus == "dispatched") | "\(.dispatchId) \(.agentTerminalHandle // "")"')
+    [ "$once" = 1 ] && return 0
+    sleep "$interval"
+  done
+}
+
 usage() {
   sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
@@ -361,6 +417,8 @@ usage() {
   tell     --team T --role R (--envelope F|--text S) 席に1行送る（design ↔ orchestrator の連絡）
   status   --team T
   doctor   --team T                                  承認待ち・利用上限を画面から拾う
+  watch    --team T [--interval S] [--quiet S] [--nudges N] [--once]
+                                                     orchestrator: 仕事中の席を見回り、止まれば促し、上限・ダイアログ・停止を知らせる
   down     --team T                                  この skill が作ったタブを閉じる
 EOF
 }
@@ -373,7 +431,7 @@ main() {
   done
   require_orca
   case "$sub" in
-    init|up|run|seat|delegate|wait|ack|settle|tell|status|doctor|down) "cmd_$sub" "${args[@]+"${args[@]}"}" ;;
+    init|up|run|seat|delegate|wait|ack|settle|tell|status|doctor|watch|down) "cmd_$sub" "${args[@]+"${args[@]}"}" ;;
     ""|-h|--help|help) usage ;;
     *) die "不明なサブコマンド: $sub" ;;
   esac
