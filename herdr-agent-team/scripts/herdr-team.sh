@@ -327,15 +327,26 @@ cmd_restart() {
     st="$(hc get "$name" --json | jq -r '.status.state // empty')"
     [ "$st" != idle ] && [ "$st" != done ] || break
     if [ -n "$prompt" ] && hc read "$name" --lines 30 | grep -qF "$prompt"; then
-      case "$cwd/" in
-        "$WORKSPACES"/*)
-          for k in $(jq -r '.keys[]' <<<"$trust"); do hc keys "$name" "$k" >/dev/null; sleep 0.3; done
-          info "$role: skill の worktree の信頼の確認に答えた（${cwd}）" ;;
-        *) warn "$role に信頼の確認が出ている（${cwd}）。hc read $name で読み、design が答える"; break ;;
-      esac
+      if own_worktree "$cwd"; then
+        for k in $(jq -r '.keys[]' <<<"$trust"); do hc keys "$name" "$k" >/dev/null; sleep 0.3; done
+        info "$role: skill の worktree の信頼の確認に答えた（${cwd}）"
+      else
+        warn "$role に信頼の確認が出ている（${cwd}）。hc read $name で読み、design が答える"; break
+      fi
     fi
   done
   cmd_status
+}
+
+# $1 が skill の作った worktree か: 実際のパスが $WORKSPACES/<repo>/ の直下にあり、repo に worktree として登録されている。
+# 文字列の前方一致だけでは ../ やシンボリックリンクで外の場所を通してしまう。
+own_worktree() {
+  local real ws repo
+  real="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  ws="$(cd "$WORKSPACES" 2>/dev/null && pwd -P)" || return 1
+  repo="$(jq -r '.repo' <<<"$CFG")"
+  [ "$(dirname "$real")" = "$ws/$(basename "$repo")" ] || return 1
+  git -C "$repo" worktree list --porcelain | grep -qxF "worktree $real"
 }
 
 # 単位の worktree を作る・消す。置き場所は <WORKSPACES>/<repo>/<unit>。
@@ -352,6 +363,7 @@ cmd_worktree() {
     esac
   done
   [ -n "$unit" ] || die "--unit が要る（指示書の <unit> と同じ名前）"
+  [[ "$unit" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$unit" != *..* ]] || die "--unit に使えない文字がある: ${unit}（英数字と . _ - だけ）"
   repo="$(jq -r '.repo' <<<"$CFG")"; dir="$(unit_dir "$unit")"
   case "$sub" in
     add)
@@ -359,8 +371,12 @@ cmd_worktree() {
       [ ! -e "$dir" ] || die "既にある: $dir"
       mkdir -p "$(dirname "$dir")"
       git -C "$repo" worktree add -b "$branch" "$dir" ${from:+"$from"} >&2
-      # 席は起動時の .envrc で devshell を読む（agent-switch の shim）。許可が無いと devshell が載らない
-      [ ! -f "$dir/.envrc" ] || direnv allow "$dir"
+      # 席は起動時の .envrc で devshell を読む（agent-switch の shim）。許可が無いと devshell が載らない。
+      # 許可するのは repo の本体で使っている .envrc と中身が同じときだけ。違えば中身を design が読んで決める
+      if [ -f "$dir/.envrc" ]; then
+        if [ -f "$repo/.envrc" ] && cmp -s "$dir/.envrc" "$repo/.envrc"; then direnv allow "$dir"
+        else warn "$dir/.envrc が repo の本体の .envrc と違う。中身を読んでから direnv allow $dir を実行する"; fi
+      fi
       printf '%s\n' "$dir" ;;
     rm)
       [ -d "$dir" ] || die "無い: $dir"
