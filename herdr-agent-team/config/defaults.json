@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "herdr-agent-team の既定の席。絶対パスは持たない（init が repo を解決して <team>.json を作る）。",
+    "design は caller: up を実行したセッション自身が座り、agent を起動しない。",
+    "それ以外の席は up が design のタブを割って並べる（レーン 2 以降は 1 レーン 1 タブ）。端末の名前は <team>-<role>。",
+    "orchestrator は親を持たない（--no-parent。design の端末は up が設定の design に書く）。他の席は orchestrator の子として起動する。",
+    "account は codex の CODEX_HOME（$HOME/.codex-<account>）。claude では無視する。"
+  ],
+  "roles": [
+    { "role": "design",         "caller": true },
+    { "role": "orchestrator",   "kind": "claude", "model": "opus",        "effort": "medium" },
+    { "role": "implementation", "kind": "codex",  "model": "gpt-6.1-sol", "effort": "medium", "account": "labteam" },
+    { "role": "review",         "kind": "claude", "model": "opus",        "effort": "medium" }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "kind ごとに model / effort / account / tier と最初の指示（task）をどう渡すか。",
+    "<key> は起動フラグ（argv トークンの配列）、<key>_env は agent の前に env で付ける変数（VAR=値 の配列）。",
+    "{model} / {effort} / {account} / {tier} / {task} / {home} が実値に置換される。",
+    "args は常に付けるフラグ。必ず <kind> --help で確かめてから書く。",
+    "new_session は席のセッションを新しくする操作（tell が単位の変わり目で使う）。send は送り手の端末 ID を外して送る文、keys は 1 つずつ押すキー、confirm は画面に出たら Enter を押す文。2026-11-06 に 3 つの kind で確かめた。"
+  ],
+  "kinds": {
+    "claude": {
+      "source": "claude --help（2026-09-14）。task は位置引数で最初の入力になる（2026-11-05 に hc run で確かめた）",
+      "model": [
+        "--model",
+        "{model}"
+      ],
+      "effort": [
+        "--effort",
+        "{effort}"
+      ],
+      "task": [
+        "{task}"
+      ],
+      "new_session": {
+        "send": "/clear"
+      }
+    },
+    "codex": {
+      "source": "codex-cli 0.166.0（2026-11-05）。アカウントは CODEX_HOME（dotfiles の cx と同じ）。cx は zsh の関数で hc run の argv からは呼べない。tier は -c service_tier",
+      "model": [
+        "-m",
+        "{model}"
+      ],
+      "effort": [
+        "-c",
+        "model_reasoning_effort=\"{effort}\""
+      ],
+      "tier": [
+        "-c",
+        "service_tier=\"{tier}\""
+      ],
+      "account_env": [
+        "CODEX_HOME={home}/.codex-{account}"
+      ],
+      "task": [
+        "{task}"
+      ],
+      "new_session": {
+        "send": "/new",
+        "confirm": "Where should the new conversation run?"
+      }
+    },
+    "opencode": {
+      "source": "opencode 2.2.5（2026-11-05）。TUI に model のフラグが無いので OPENCODE_CONFIG_CONTENT で渡す（opencode debug config で反映を確かめた）。model は provider/model（例: opencode-go/glm-5.3-flash）。--standalone は env の設定を共有の background service ではなく自分の server に効かせるため",
+      "args": [
+        "--standalone"
+      ],
+      "model_env": [
+        "OPENCODE_CONFIG_CONTENT={\"model\":\"{model}\"}"
+      ],
+      "task": [
+        "--prompt",
+        "{task}"
+      ],
+      "new_session": {
+        "keys": [
+          "ctrl+x",
+          "w"
+        ]
+      }
+    }
+  }
+}
