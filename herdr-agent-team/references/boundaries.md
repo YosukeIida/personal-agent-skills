@@ -47,8 +47,24 @@ focus したペインの右か下に出す（place を省くと新しいタブ�
 仕事の正しさは指示書が持ち、同じセッションを続けるのは読み直しを省く最適化に過ぎない。
 
 `tell --envelope` が指示書の名前 `<unit>-<role>-<n>.md` から単位を取り、席ごとに最後の単位を `<team>/seats.json` に記録する。
-単位が変わったとき（記録の無い `up` 直後の席も）だけ、送る前に `config/kind-flags.json` の `new_session` を行う。
-orchestrator のセッションは切らない（design との約束を持つ）。
+単位が変わったとき（記録の無い `up` 直後の席も）だけ、送る前に席を切り替える。単位の worktree（`~/herdr/workspaces/<repo>/<unit>`）が
+あればそこで `restart` し、無ければ `config/kind-flags.json` の `new_session` を行う。orchestrator のセッションは切らない（design との約束を持つ）。
+
+## worktree と起動し直し
+
+worktree は Orca と同じく専用の場所 `~/herdr/workspaces/<repo>/<unit>` に置き、席は単位ごとにその worktree で起動し直す。
+作業ディレクトリが worktree になるので、Codex の sandbox がそこへ書け、`git`・相対パス・devshell（起動時の `.envrc` を agent-switch の shim が読む）がそのまま効く。
+席を repo の隣の worktree で動かしていた ararat では、Codex が新しい worktree に書けず止まった（2026-11-06）。
+
+- 初めてのフォルダでは claude も Codex も信頼の確認を出す。親のディレクトリを信頼しても、下の git の作業ツリーでは改めて出る。
+  Codex は起動時の `-c projects."<path>".trust_level` でも消えない（2026-11-06 に確かめた）。そこで `restart` は、
+  `~/herdr/workspaces` の下（skill が作った worktree）に限って、`kind-flags.json` の `trust` のキーで確認に答える。それ以外の場所の確認は design が判断する
+- `restart` は端末を作り直さず、同じ端末の中で agent だけを起動し直す。席は `bash -c '<agent>; exec bash --norc -i'` で起動しており、
+  agent を止めると shell が残るので、そこへ `cd <dir> && <agent>` を送る。端末を作り直す方式では、古いペインが閉じる処理と新しいペインを置く処理が
+  Herdr app の中で競合し、新しいペインが後から消えた（数回再現。止める前の端末がペインを持っていたときだけ起きた）
+- `up` の配置はペインの無い席だけを足す。上の席だけが無ければ、下の席の下に置いて `pane.swap` で上下を入れ替える。幅は `doc.get` の木で目標とずれているときだけ直す。
+  起動した直後の端末は `terminal.keep` を断られることがあるので、数回やり直す
+- `worktree rm` は、ブランチが repo の今のブランチ（main）に入っていて、commit していない変更が無く、どの席もその worktree にいないときだけ消す。ブランチは `git branch -d` で消す
 
 kind ごとの操作（2026-11-06、claude 2.1.316・codex 0.166.0・opencode 2.2.5 で、切り替え後に前の指示を答えられないことを確かめた）:
 

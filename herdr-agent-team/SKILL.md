@@ -32,7 +32,10 @@ S=~/.claude/skills/herdr-agent-team/scripts/herdr-team.sh
 bash $S init --team <T> --repo <repo>          # 既定の席で設定を作る
 bash $S init --team <T> --repo <repo> --set implementation.model=gpt-6.1-terra --set implementation.effort=high \
   --set implementation-2.kind=opencode --set implementation-2.model=opencode-go/glm-5.3-flash
-bash $S up --team <T>                          # 席を起動してペインに並べる（冪等）
+bash $S up --team <T>                          # 席を起動してペインに並べる（冪等。ペインの無い席だけを正しい位置に足す）
+bash $S restart --team <T> --role <role> [--cwd <dir>]   # 席の agent を同じ端末・同じペインの中で起動し直す
+bash $S worktree add --team <T> --unit <unit> --branch <b>   # ~/herdr/workspaces/<repo>/<unit> に作る
+bash $S worktree rm --team <T> --unit <unit>   # main に入っていて変更が無く、席がいなければ消す
 
 # 仕事を渡す: 指示をファイルに書き、パスだけを送る
 bash $S tell --team <T> --role orchestrator --envelope ~/.config/herdr-agent-team/<T>/envelopes/<file>.md

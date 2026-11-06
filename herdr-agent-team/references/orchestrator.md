@@ -26,12 +26,15 @@ design は `Read and execute the task envelope at <path>` の1行を送ってく
 
 ## 3. 席に仕事を渡す
 
+0. **単位の worktree を作る**: `bash $S worktree add --team <T> --unit <unit> --branch <branch> [--from <rev>]`。
+   `~/herdr/workspaces/<repo>/<unit>` にでき、`.envrc` があれば `direnv allow` まで済む。worktree は自分で `git worktree add` しない。
 1. 席ごとの指示書をファイルに書く。置き場は `~/.config/herdr-agent-team/<T>/envelopes/`。
    ファイル名は `<unit>-<role>-<n>.md`（`tell` はこの形でないと断る）。`<unit>` は design から来た 1 件の仕事の名前で、
    実装 → レビュー → 修正の往復のあいだは同じ `<unit>` を使い、`<n>` だけ増やす。**指示は全部ファイルに書く**。端末に送るのはパスの1行だけ。
 2. 渡す: `bash $S tell --team <T> --role implementation --envelope <file>`
-3. **席のセッションは `tell` が切り替える。** 席に渡す `<unit>` が前と変わると、`tell` が送る前に席のセッションを新しくする
-   （前の単位の文脈は消える）。同じ `<unit>` の続きは同じセッションに届く。自分で `/clear`・`/new` を送らない。
+3. **席のセッションと作業場所は `tell` が切り替える。** 席に渡す `<unit>` が前と変わると、`tell` が送る前に席を
+   その単位の worktree で起動し直す（worktree が無ければセッションだけ新しくする）。前の単位の文脈は消える。
+   同じ `<unit>` の続きは同じセッションに届く。自分で `/clear`・`/new` を送ったり、席を起動し直したりしない。
 4. 同じ席には、前の仕事が片付くまで次を渡さない。別の席（implementation と review）には並行して渡してよい。
 5. **席の役割は固定する。** 実装・fixture の取得・修正は implementation、レビューは review にだけ渡す。
    空いているからといって、review の席に実装を渡したり、implementation の席にレビューを渡したりしない。
@@ -41,8 +44,7 @@ design は `Read and execute the task envelope at <path>` の1行を送ってく
 - 何をするか、完了の条件、触ってよい範囲（ファイル・ディレクトリ）と触ってはいけない範囲
 - **前の文脈に頼らない。** 同じ単位の続きでも、読むべきファイル（前の指示書・報告・レビュー）をパスで書く。
   「さっきの」「前回の」とは書かない。文脈は自動の圧縮・席の再起動・別の席への渡し直しで消える
-- 作業する場所（git worktree のパス）。無ければ作り方も書く。worktree は repo の隣（`<repo>-<n>` など、その repo の慣習に合わせる）に作り、
-  `~/.config/herdr-agent-team/` や scratchpad の下には作らない
+- 作業する場所（`worktree add` が返した worktree のパス）。席はそこで起動し直されるが、パスも書く
 - **commit / push / PR の作成 / issue の作成 / 外部への投稿は、design の指示書に「user が許可した」と書かれていない限りしない**
 - **入力を送ってよい端末は、その仕事の中で自分が作った端末と、報告先の orchestrator だけ**（他の席・design・user の端末に send / kill しない）
 - **agent を起動しない**（subagent・`hc run` で別の agent を起こさない）
@@ -77,12 +79,18 @@ bash $S wait --team <T>              # 子の知らせか、自分宛ての send
 **送信に失敗したら、送り直す前に相手の画面を読む。** 届いている場合がある。
 **何も返ってこないことは「止まった」証拠ではない。** kill・送り直しは、画面で根拠を確かめてから。
 
-## 5. design に返す
+## 5. 単位を閉じる
+
+design がその単位を main に commit したと知らせてきたら、`bash $S worktree rm --team <T> --unit <unit>` で worktree とブランチを消す。
+main に入っていない・commit していない変更がある・席がまだその worktree にいるときは断られる。断られたら理由を design に知らせる
+（席がいるなら、次の単位を渡した後に消す）。
+
+## 6. design に返す
 
 - 短い報告は1行: `bash $S tell --team <T> --role design --text "<1行>"`
 - 長い報告はファイルに書いてから: `bash $S tell --team <T> --role design --envelope <report.md>`
 
-## 6. 判断に迷ったら
+## 7. 判断に迷ったら
 
 仕事の中身・優先度・範囲の判断は design のもの。推測で進めず、design に tell して待つ。
 席を新しく起動しない・閉じない（席の構成は design の `up` / `down` が持つ）。

@@ -4,7 +4,8 @@
     "<key> は起動フラグ（argv トークンの配列）、<key>_env は agent の前に env で付ける変数（VAR=値 の配列）。",
     "{model} / {effort} / {account} / {tier} / {task} / {home} が実値に置換される。",
     "args は常に付けるフラグ。必ず <kind> --help で確かめてから書く。",
-    "new_session は席のセッションを新しくする操作（tell が単位の変わり目で使う）。send は送り手の端末 ID を外して送る文、keys は 1 つずつ押すキー、confirm は画面に出たら Enter を押す文。2026-11-06 に 3 つの kind で確かめた。"
+    "new_session は席のセッションを新しくする操作（tell が単位の変わり目で使う）。send は送り手の端末 ID を外して送る文、keys は 1 つずつ押すキー、confirm は画面に出たら Enter を押す文。2026-11-06 に 3 つの kind で確かめた。",
+    "trust は、初めてのフォルダで出る信頼の確認と、それに答えるキー。restart が ~/herdr/workspaces の下（skill が作った worktree）で起動したときだけ答える。2026-11-06 に claude・codex で確かめた。"
   ],
   "kinds": {
     "claude": {
@@ -22,6 +23,13 @@
       ],
       "new_session": {
         "send": "/clear"
+      },
+      "trust": {
+        "prompt": "Yes, I trust this folder",
+        "keys": [
+          "down",
+          "enter"
+        ]
       }
     },
     "codex": {
@@ -47,6 +55,12 @@
       "new_session": {
         "send": "/new",
         "confirm": "Where should the new conversation run?"
+      },
+      "trust": {
+        "prompt": "Trust this folder?",
+        "keys": [
+          "enter"
+        ]
       }
     },
     "opencode": {
