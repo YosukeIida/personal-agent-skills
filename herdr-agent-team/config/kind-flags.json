@@ -61,7 +61,13 @@
         "keys": [
           "enter"
         ]
-      }
+      },
+      "sandbox": [
+        "-s",
+        "{sandbox}",
+        "-a",
+        "never"
+      ]
     },
     "opencode": {
       "source": "opencode 2.2.5（2026-11-05）。TUI に model のフラグが無いので OPENCODE_CONFIG_CONTENT で渡す（opencode debug config で反映を確かめた）。model は provider/model（例: opencode-go/glm-5.3-flash）。--standalone は env の設定を共有の background service ではなく自分の server に効かせるため",

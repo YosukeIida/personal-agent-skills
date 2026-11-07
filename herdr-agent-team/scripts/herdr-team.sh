@@ -53,7 +53,7 @@ build_argv() {
       '.kinds[$k][$f] // [] | .[] | gsub("\\{" + $key + "\\}"; $v) | gsub("\\{home\\}"; $home)' "$tmpl"
   }
   while IFS= read -r k; do flags+=("$k"); done < <(jq -r --arg k "$kind" '.kinds[$k].args // [] | .[]' "$tmpl")
-  for key in account model effort tier; do
+  for key in account model effort tier sandbox; do
     val="$(role_field "$role" "$key")"; [ -n "$val" ] || continue
     if jq -e --arg k "$kind" --arg f "${key}_env" '.kinds[$k][$f]' "$tmpl" >/dev/null; then
       while IFS= read -r k; do envs+=("$k"); done < <(expand "${key}_env" "$key" "$val")
