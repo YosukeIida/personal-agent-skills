@@ -204,16 +204,43 @@ arrange() {
   herdr-app do pane.focus --terminal "$me" >/dev/null || true
 }
 
-# 席の端末を起こす（ペインは arrange が出す）。agent は bash の子として動かし、agent が終わっても端末は shell で残す。
+# 席の端末を起こす（ペインは arrange が出す）。端末は user のふだんの login zsh で、agent はそこに打って起動し、
+# agent が終わっても端末は zsh で残る。素の bash（--norc）にしないのは、nix-darwin の環境・agent-switch の shim・
+# direnv の hook が通らず、agent のコマンドの zsh が PATH を初期化し直して devshell が消えたため（2026-11-07）。
 # 端末を作り直して起動し直すと、古いペインが閉じる処理と新しいペインを置く処理が Herdr app の中で競合し、
 # 新しいペインが後から消える（2026-11-06 に数回再現）。同じ端末の中で agent だけを起こし直せば、ペインに触らずに済む。
-SEAT_SHELL='exec bash --norc -i'
+seat_is_zsh() { jq -e '.argv == ["zsh", "-il"]' >/dev/null; }
 start_seat() {
-  local role="$1"
+  local role="$1" repo; repo="$(jq -r '.repo' <<<"$CFG")"
+  hc run --bg --json --name "$(seat "$role")" --cwd "$repo" --parent "$(seat orchestrator)" --label "herdr-team.role=$role" \
+    -- zsh -il >/dev/null
+  launch_agent "$role" "$repo"
+}
+
+# 席の zsh に agent を打って起動し、入力を待つ状態（idle）になるまで待つ。信頼の確認は状態を報告しないので画面で見る。
+# 確認に答えるのは skill が作った worktree（$WORKSPACES の下）だけ。それ以外のフォルダは design が判断する。
+launch_agent() {
+  local role="$1" cwd="$2" name trust prompt st i k
+  name="$(seat "$role")"
   build_argv "$role"
-  info "$role: ${ARGV[*]}"
-  hc run --bg --json --name "$(seat "$role")" --cwd "$(jq -r '.repo' <<<"$CFG")" --parent "$(seat orchestrator)" --label "herdr-team.role=$role" \
-    -- bash -c "$(printf '%q ' "${ARGV[@]}"); $SEAT_SHELL" >/dev/null
+  info "$role: ${ARGV[*]}（${cwd}）"
+  # 送り手の端末 ID があると hc send は本文を <hc from> で囲み、shell がコマンドとして読めない
+  env -u HC_TERMINAL_ID hc send "$name" "cd $(printf '%q' "$cwd") && $(printf '%q ' "${ARGV[@]}")" >/dev/null
+  trust="$(jq -c --arg k "$(role_field "$role" kind)" '.kinds[$k].trust // empty' "$SKILL_DIR/config/kind-flags.json")"
+  prompt="$(jq -r '.prompt // empty' <<<"${trust:-{\}}")"
+  for i in $(seq 1 60); do
+    sleep 1
+    st="$(hc get "$name" --json | jq -r '.status.state // empty')"
+    [ "$st" != idle ] && [ "$st" != done ] || break
+    if [ -n "$prompt" ] && hc read "$name" --lines 30 | grep -qF "$prompt"; then
+      if own_worktree "$cwd"; then
+        for k in $(jq -r '.keys[]' <<<"$trust"); do hc keys "$name" "$k" >/dev/null; sleep 0.3; done
+        info "$role: skill の worktree の信頼の確認に答えた（${cwd}）"
+      else
+        warn "$role に信頼の確認が出ている（${cwd}）。hc read $name で読み、design が答える"; break
+      fi
+    fi
+  done
 }
 
 # ----------------------------------------------------------------- commands
@@ -303,8 +330,7 @@ cmd_restart() {
   [ -d "$cwd" ] || die "ディレクトリが無い: $cwd"
   local name j pid i kids; name="$(seat "$role")"
   j="$(live "$name")" || die "$name が動いていない（up で起こす）"
-  jq -e --arg s "$SEAT_SHELL" '.argv[0] == "bash" and (.argv[-1] | endswith($s))' <<<"$j" >/dev/null \
-    || die "$name は agent を shell の子にせずに起動されている（この版より前の up）。down と up で起こし直す"
+  seat_is_zsh <<<"$j" || die "$name は login zsh の端末ではない（この版より前の up）。down と up で起こし直す"
   [ "$(jq -r '.status.state // empty' <<<"$j")" != working ] || die "$role は作業中。終わりを待ってから起動し直す"
   pid="$(jq -r '.pid' <<<"$j")"
   kids="$(pgrep -P "$pid" || true)"
@@ -313,28 +339,7 @@ cmd_restart() {
     for i in $(seq 1 20); do [ -z "$(pgrep -P "$pid" || true)" ] && break; sleep 0.5; done
     [ -z "$(pgrep -P "$pid" || true)" ] || die "$role の agent が終わらない（pid $(pgrep -P "$pid" | tr '\n' ' ')）"
   fi
-  build_argv "$role"
-  info "$role: ${ARGV[*]}（${cwd}）"
-  # 送り手の端末 ID があると hc send は本文を <hc from> で囲み、shell がコマンドとして読めない
-  env -u HC_TERMINAL_ID hc send "$name" "cd $(printf '%q' "$cwd") && $(printf '%q ' "${ARGV[@]}")" >/dev/null
-  # 起動して入力を待つ状態（idle）になるまで待つ。信頼の確認は状態を報告しないので画面で見る。
-  # 確認に答えるのは skill が作った worktree（$WORKSPACES の下）だけ。それ以外のフォルダは design が判断する。
-  local trust prompt st
-  trust="$(jq -c --arg k "$(role_field "$role" kind)" '.kinds[$k].trust // empty' "$SKILL_DIR/config/kind-flags.json")"
-  prompt="$(jq -r '.prompt // empty' <<<"${trust:-{\}}")"
-  for i in $(seq 1 60); do
-    sleep 1
-    st="$(hc get "$name" --json | jq -r '.status.state // empty')"
-    [ "$st" != idle ] && [ "$st" != done ] || break
-    if [ -n "$prompt" ] && hc read "$name" --lines 30 | grep -qF "$prompt"; then
-      if own_worktree "$cwd"; then
-        for k in $(jq -r '.keys[]' <<<"$trust"); do hc keys "$name" "$k" >/dev/null; sleep 0.3; done
-        info "$role: skill の worktree の信頼の確認に答えた（${cwd}）"
-      else
-        warn "$role に信頼の確認が出ている（${cwd}）。hc read $name で読み、design が答える"; break
-      fi
-    fi
-  done
+  launch_agent "$role" "$cwd"
   cmd_status
 }
 
@@ -428,7 +433,7 @@ cmd_tell() {
       # 単位の worktree があれば、席をそこで起動し直す（新しいセッションにもなる）。無ければ同じ場所でセッションだけ新しくする
       # shortcut: この版より前の up で起動した席（ararat、2026-11-06 時点）は restart できないので、セッションだけ新しくする。
       # その席は worktree に書けないことがある（Codex の sandbox）。チームを down と up で起こし直したら、この分岐を消す
-      if [ -d "$(unit_dir "$unit")" ] && live "$target" | jq -e --arg s "$SEAT_SHELL" '.argv[0] == "bash" and (.argv[-1] | endswith($s))' >/dev/null; then
+      if [ -d "$(unit_dir "$unit")" ] && live "$target" | seat_is_zsh; then
         cmd_restart --role "$role" --cwd "$(unit_dir "$unit")" >/dev/null
       else
         [ ! -d "$(unit_dir "$unit")" ] || warn "$role は古い up で起動されていて worktree で起動し直せない。セッションだけ新しくする（down と up で直る）"

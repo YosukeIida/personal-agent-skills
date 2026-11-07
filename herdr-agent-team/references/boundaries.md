@@ -59,8 +59,12 @@ worktree は Orca と同じく専用の場所 `~/herdr/workspaces/<repo>/<unit>`
 - 初めてのフォルダでは claude も Codex も信頼の確認を出す。親のディレクトリを信頼しても、下の git の作業ツリーでは改めて出る。
   Codex は起動時の `-c projects."<path>".trust_level` でも消えない（2026-11-06 に確かめた）。そこで `restart` は、
   `~/herdr/workspaces` の下（skill が作った worktree）に限って、`kind-flags.json` の `trust` のキーで確認に答える。それ以外の場所の確認は design が判断する
-- `restart` は端末を作り直さず、同じ端末の中で agent だけを起動し直す。席は `bash -c '<agent>; exec bash --norc -i'` で起動しており、
-  agent を止めると shell が残るので、そこへ `cd <dir> && <agent>` を送る。端末を作り直す方式では、古いペインが閉じる処理と新しいペインを置く処理が
+- 席の端末は user のふだんの login zsh（`zsh -il`）で、`up` も `restart` もそこへ `cd <dir> && <agent>` を送って agent を起動する。
+  zsh なので nix-darwin の環境・agent-switch の shim・direnv の hook が通り、agent には devshell と `__NIX_DARWIN_SET_ENVIRONMENT_DONE` が渡る。
+  agent のコマンドの login zsh は PATH を初期化し直さず、devshell が残る（2026-11-08 に確かめた）。素の bash（`--norc`）で起動していた間は、
+  この印が無く、agent のコマンドの zsh が PATH を戻して devshell が消えた。
+- `restart` は端末を作り直さず、同じ端末の中で agent だけを起動し直す。agent を止めると zsh が残るので、そこへ起動の行を送る。
+  端末を作り直す方式では、古いペインが閉じる処理と新しいペインを置く処理が
   Herdr app の中で競合し、新しいペインが後から消えた（数回再現。止める前の端末がペインを持っていたときだけ起きた）
 - `up` の配置はペインの無い席だけを足す。上の席だけが無ければ、下の席の下に置いて `pane.swap` で上下を入れ替える。幅は `doc.get` の木で目標とずれているときだけ直す。
   起動した直後の端末は `terminal.keep` を断られることがあるので、数回やり直す
@@ -80,8 +84,7 @@ kind ごとの操作（2026-11-06、claude 2.1.316・codex 0.166.0・opencode 2.
 
 - **claude**・**codex**（0.166.0）・**opencode**（2.2.5）は、どれも OSC 7501 で状態（idle・working・done）を報告した。
   報告しない agent は `hc wait` で終わりを判定できないので、席にしない。
-- codex のアカウントは `CODEX_HOME=$HOME/.codex-<account>` で渡す。dotfiles の `cx` は zsh の関数で、
-  `hc run` の argv からは呼べない。agent-switch の shim（`claude`・`codex`）は PATH 上の実行ファイルなので、
-  argv から起動しても devshell が載る。
+- codex のアカウントは `CODEX_HOME=$HOME/.codex-<account>` で渡す（`env CODEX_HOME=… codex` なので、zsh の関数 `cx`・`codex` ではなく
+  PATH 上の agent-switch の shim が起動する）。claude は env を付けないので、席の zsh では agent-switch の関数 `claude` が起動する。
 - opencode の model は `OPENCODE_CONFIG_CONTENT` で渡す。`#max` などの variant（effort）が効くかは確かめていない
   （`opencode debug config` で env 側の variant が落ちて見えた）。
