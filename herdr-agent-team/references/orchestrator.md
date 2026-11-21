@@ -35,6 +35,9 @@ design は `Read and execute the task envelope at <path>` の1行を送ってく
 3. **席のセッションと作業場所は `tell` が切り替える。** 席に渡す `<unit>` が前と変わると、`tell` が送る前に席を
    その単位の worktree で起動し直す（worktree が無ければセッションだけ新しくする）。前の単位の文脈は消える。
    同じ `<unit>` の続きは同じセッションに届く。自分で `/clear`・`/new` を送ったり、席を起動し直したりしない。
+   単位の中の仕事は、区切りで止めさせずに同じセッションで最後まで続けさせる。文脈が溢れそうなら agent の compact に任せ、
+   読み直しも agent に任せる。近い仕事（同じファイル・同じ worktree の続き）は、単位が変わっても
+   `tell --keep-session` で同じセッションに渡す。worktree が変わる仕事には使わない（Codex は cwd の外に書けない）。
 4. 同じ席には、前の仕事が片付くまで次を渡さない。別の席（implementation と review）には並行して渡してよい。
 5. **席の役割は固定する。** 実装・fixture の取得・修正は implementation、レビューは review にだけ渡す。
    空いているからといって、review の席に実装を渡したり、implementation の席にレビューを渡したりしない。
@@ -50,7 +53,9 @@ design は `Read and execute the task envelope at <path>` の1行を送ってく
 - **agent を起動しない**（subagent・`hc run` で別の agent を起こさない）
 - 長い成果物（レビュー全文・ログ・差分）はファイルに書き、報告にはパスと要約だけ書く
 - 終わったら、または詰まったら、`hc send <orchestrator の端末> "<結果の要約とファイルのパス>"` で1回報告する
-  （受け取った指示の `reach=` に書かれた宛先）
+  （受け取った指示の `reach=` に書かれた宛先）。Codex の sandbox の中では hc の socket に届かず
+  `Operation not permitted` で失敗するので、そのときは sandbox の外での実行を要求して1回だけ再試行する。
+  その要求も断られたら、報告をファイルに残して終える
 
 ## 4. 待つ
 
@@ -81,9 +86,11 @@ bash $S wait --team <T>              # 子の知らせか、自分宛ての send
 
 ## 5. 単位を閉じる
 
-design がその単位を main に commit したと知らせてきたら、`bash $S worktree rm --team <T> --unit <unit>` で worktree とブランチを消す。
+design がその単位を main に commit したと知らせてきたら、同じ手番で必ず `bash $S worktree rm --team <T> --unit <unit>` を実行し、worktree とブランチを消す。
+消さずに次の単位へ進まない（worktree は 1 つ 3GB 前後あり、残すとディスクを使い切る。ararat では merge 済みの 22 個が残っていた）。
 main に入っていない・commit していない変更がある・席がまだその worktree にいるときは断られる。断られたら理由を design に知らせる
-（席がいるなら、次の単位を渡した後に消す）。
+（席がいるなら、次の単位を渡した後、その同じ手番で消す）。
+単位の外で agent が `git worktree add` で作った検証用の worktree も、使い終えたら同じ手番で `git worktree remove` で消す。
 
 ## 6. design に返す
 
