@@ -110,6 +110,30 @@ lane() { [[ "$1" =~ -([0-9]+)$ ]] && printf '%s' "${BASH_REMATCH[1]}" || printf 
 # 端末の Herdr app のペイン。ペインが無ければ空。
 pane_of() { herdr-app ls 2>/dev/null | jq -r --arg t "$1" '[.spaces[].tabs[].terminals[] | select(.terminal == $t) | .pane][0] // empty'; }
 
+# ペインの無い端末 $1 を、端末 $2 のペインの $3（right / down）に出す。$2 が空なら新しいタブに出し、タブの id を返す。
+show() {
+  local addr; addr="$(hc get "$1" --json | jq -r .address)"
+  [ -z "$(pane_of "$addr")" ] || return 0
+  local tab="" out i
+  # 起動した直後の端末は keep を断られることがある（tab の無い応答で失敗する）。少し待ってやり直す
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -n "$2" ]; then
+      herdr-app do pane.focus --terminal "$2" >/dev/null 2>&1 || true
+      out="$(herdr-app do terminal.keep --terminal "$addr" --place "$3" 2>&1 || true)"
+    else
+      out="$(herdr-app do terminal.keep --terminal "$addr" 2>&1 || true)"
+    fi
+    tab="$(jq -r '.tab // empty' <<<"$out" 2>/dev/null || true)"
+    [ -z "$tab" ] || break
+    sleep 1
+  done
+  [ -n "$tab" ] || { warn "$1 をペインに出せない: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"; return 1; }
+  # keep は pending を返し、ペインは後からできる。次の分割はこのペインを起点にするので、できるまで待つ。
+  for i in 1 2 3 4 5 6 7 8 9 10; do [ -n "$(pane_of "$addr")" ] && break; sleep 0.5; done
+  [ -n "$(pane_of "$addr")" ] || { warn "$1 のペインができない"; return 1; }
+  printf '%s' "$tab"
+}
+
 # Herdr app が core に保存しているタブの分割の木（root）。herdr-app ls には木が出ない。
 tab_tree() {
   # hc connect は stdin が閉じると応答を待たずに終わるので、送った後しばらく開けておく
@@ -117,51 +141,67 @@ tab_tree() {
     | hc connect 2>/dev/null | jq -c --arg t "$1" 'select(.id == 2) | [.. | objects | select(.id? == $t and has("root")) | .root][0] // empty'
 }
 
-# design のタブの幅を design 30%・orchestrator 20%・残りの席で 50% を等分にする。
-# 席が横一列（ルートの row の直下がすべて端末）で、先頭が design・orchestrator のときだけ行う。入れ子や並びが違えば何もしない。
+# design のタブの幅を design 45%・orchestrator 20%・右の列 35% にする。並びが違えば何もしない。
 size_columns() {
-  local me="$1" orch="$2" tab ids id w
+  local me="$1" orch="$2" tab ids
   tab="$(herdr-app ls | jq -r --arg t "$me" '[.spaces[].tabs[] | select(any(.terminals[]; .terminal == $t)) | .id][0] // empty')"
   ids="$(tab_tree "$tab" | jq -r --arg d "$me" --arg o "$orch" '
-    select(.type == "row" and (.children | length) >= 3 and all(.children[]; .type == "block"))
-    | select(.children[0].content.terminal == $d and .children[1].content.terminal == $o)
-    | (.children | length) as $n
-    | [.children | to_entries[] | {id: .value.id, cur: ((.value.size.weight // 1) * 100 | round),
-        want: (if .key == 0 then 30 elif .key == 1 then 20 else 50 / ($n - 2) end)}]
-    | select(any(.[]; .cur != (.want | round)))
-    | .[] | "\(.id) \(.want / 100)"')"
-  [ -n "$ids" ] || return 0
-  # 置いた直後のペインと同じタブの文書を続けて書くと、ペインの記録が消えることがあるので、目標どおりなら書かない（上の select）
-  while read -r id w; do herdr-app do layout.resize --id "$id" --weight "$w" >/dev/null; done <<<"$ids"
+    select(.type == "row" and (.children | length) == 3)
+    | select(.children[0].content.terminal == $d and .children[1].content.terminal == $o and .children[2].type == "column")
+    | .children | map(.id + ":" + ((.size.weight // 1) * 100 | round | tostring)) | @tsv')"
+  [ -n "$ids" ] || { warn "design のタブが design | orchestrator | 右の列 の並びでない（幅は変えていない）"; return 0; }
+  # 幅がもう目標どおりなら書かない。置いた直後のペインと同じタブの文書を続けて書くと、ペインの記録が消えることがある
+  [ "$(printf '%s' "$ids" | tr '\t' '\n' | cut -d: -f2 | tr '\n' ' ')" != "45 20 35 " ] || return 0
+  ids="$(printf '%s' "$ids" | tr '\t' '\n' | cut -d: -f1 | tr '\n' ' ')"
+  set -- $ids
+  herdr-app do layout.resize --id "$1" --weight 0.45 >/dev/null
+  herdr-app do layout.resize --id "$2" --weight 0.20 >/dev/null
+  herdr-app do layout.resize --id "$3" --weight 0.35 >/dev/null
 }
 
-# 席を並べる: ペインの無い席を design のタブへ、hc の label（herdr.space・herdr.tab）で取り込む。orchestrator が先頭、
-# 続けて役割の順に、タブの分割の木の最後の端末の右へ足される（横一列）。ペインのある席は動かさないので、1 席だけ起動し直した後に呼んでもよい。
-# focus は動かない。terminal.keep --place は focus 中のペインを基準にするので採らない（agent が起こすたびに user の画面が design へ移った）。
-# pane.split --pane は focus を動かさないが、新しい端末を作るので hc で先に起こした席（--parent）を取り込めず採らない。
-# terminal.show --pane は focus を動かすので採らない。代わりに、implementation と review を縦に重ねる分割は作れない。
+# レーンの 2 席（上 $1・下 $2）のうちペインの無いほうを出す。上が無く下があるときは、下の下に出して上下を入れ替える。
+# $3: 上を新しく出すときの基準（orchestrator の端末、空なら新しいタブ）。
+show_lane() {
+  local top="$1" bottom="$2" anchor="$3" t b tab=""
+  t="$(hc get "$top" --json | jq -r .address)"
+  b="$( [ -n "$bottom" ] && hc get "$bottom" --json | jq -r .address || true)"
+  if [ -z "$(pane_of "$t")" ] && [ -n "$b" ] && [ -n "$(pane_of "$b")" ]; then
+    show "$top" "$b" down >/dev/null || true
+    herdr-app do pane.focus --terminal "$t" >/dev/null
+    herdr-app do pane.swap --direction up >/dev/null
+  elif [ -n "$anchor" ]; then
+    show "$top" "$anchor" right >/dev/null || true
+  else
+    tab="$(show "$top" "" "" || true)"
+  fi
+  [ -z "$b" ] || show "$bottom" "$t" down >/dev/null || true
+  printf '%s' "$tab"
+}
+
+# 席を並べる: design のタブに「design | orchestrator | レーン 1 の implementation / review（上下）」、
+# レーン 2 以降は 1 レーン 1 タブ（上下）。ペインのある席は動かさず、無い席だけを正しい位置に足すので、
+# 1 席だけ起動し直した後に呼んでも並びは崩れない。
 arrange() {
-  local me="$1" orch role name sp tb names=()
+  local me="$1" orch role l tab
   command -v herdr-app >/dev/null 2>&1 || { warn "herdr-app が無い（席はペインに出していない）"; return 0; }
-  read -r sp tb < <(herdr-app ls | jq -r --arg t "$me" '.spaces[] as $s | $s.tabs[] | select(any(.terminals[]; .terminal == $t)) | "\($s.id) \(.id)"' | head -1) || true
-  [ -n "${tb:-}" ] || { warn "Herdr app に design のペインが見えない（席はペインに出していない）"; return 0; }
+  [ -n "$(pane_of "$me")" ] || { warn "Herdr app に design のペインが見えない（席はペインに出していない）"; return 0; }
   orch="$(hc get "$(seat orchestrator)" --json | jq -r .address)"
-  names=("$(seat orchestrator)")
-  for role in $(seat_roles); do [ "$role" = orchestrator ] || names+=("$(seat "$role")"); done
-  local addrs=() a i
-  for name in "${names[@]}"; do
-    a="$(hc get "$name" --json | jq -r .address)"; addrs+=("$a")
-    [ -z "$(pane_of "$a")" ] || continue
-    hc label "$name" "herdr.space=$sp" "herdr.tab=$tb" >/dev/null || warn "$name をペインに出せない"
-    # 1 席ずつ、ペインができてから次を取り込む。続けて label すると、足される順が入れ替わる（2026-11-22 に再現）
-    for i in 1 2 3 4 5 6 7 8 9 10; do [ -n "$(pane_of "$a")" ] && break; sleep 0.5; done
+  show "$(seat orchestrator)" "$me" right >/dev/null || true
+  declare -A top=() bottom=()
+  for role in $(seat_roles); do
+    [ "$role" = orchestrator ] && continue
+    l="$(lane "$role")"
+    if [ -z "${top[$l]:-}" ]; then top[$l]="$(seat "$role")"; else bottom[$l]="$(seat "$role")"; fi
   done
-  # label の取り込みは非同期。全席が木に載る前に幅を決めると、後から足された席で崩れるので、載るまで待つ（tab_tree が 1 回 2 秒かかる）
-  for a in 1 2 3 4 5 6; do
-    tab_tree "$tb" | jq -e --argjson want "$(printf '%s\n' "${addrs[@]}" | jq -R . | jq -sc .)" \
-      '[.. | objects | select(.type == "block") | .content.terminal] as $have | all($want[]; . as $x | $have | index($x))' >/dev/null && break
+  for l in $(printf '%s\n' "${!top[@]}" | sort -n); do
+    if [ "$l" = 1 ]; then show_lane "${top[$l]}" "${bottom[$l]:-}" "$orch" >/dev/null
+    else
+      tab="$(show_lane "${top[$l]}" "${bottom[$l]:-}" "")"
+      [ -z "$tab" ] || herdr-app do tab.rename --id "$tab" --name "$TEAM-$l" >/dev/null || true
+    fi
   done
   size_columns "$me" "$orch"
+  herdr-app do pane.focus --terminal "$me" >/dev/null || true
 }
 
 # 席の端末を起こす（ペインは arrange が出す）。端末は user のふだんの login zsh で、agent はそこに打って起動し、

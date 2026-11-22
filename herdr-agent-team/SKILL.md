@@ -2,7 +2,7 @@
 name: herdr-agent-team
 description: >-
   herdr-core（hc）と Herdr app で、役割ごとの agent の席（design / orchestrator / implementation / review）を
-  design のタブへ横一列に並べ、orchestrator が hc send / hc wait で implementation / review に仕事を渡して結果を受け取る。
+  design のタブに分割して並べ、orchestrator が hc send / hc wait で implementation / review に仕事を渡して結果を受け取る。
   席ごとに kind（claude / codex / opencode）・model・effort・アカウント（personal / labteam）を設定で選ぶ。
   「herdr でエージェントチームを起動して」「チームを立てて」「orchestrator を立てて」
   「席の状態を見せて」「チームを畳んで」などで使う。
@@ -11,20 +11,22 @@ description: >-
 
 # herdr-agent-team
 
-design（このセッション）が `up` で、design のタブへ orchestrator・implementation・review のペインを足して並べる。
+design（このセッション）が `up` で、design のタブを割って orchestrator・implementation・review のペインを並べる。
 席は orchestrator の子の端末になる。orchestrator は親を持たず、design の端末は team 設定の `design` に記録する。
-ペインは hc の label で取り込むので、user が見ている画面（focus）は動かない。
+ペインを置くたびに focus が design のタブへ移る（`references/boundaries.md`）。
 
 ```
-design のタブ:  design 30% | orchestrator 20% | 残りの席を等分（横一列。implementation → review → レーン 2 以降の順）
+design のタブ:  design 45% | orchestrator 20% | implementation / review（上下）35%
+<team>-2 のタブ: implementation-2 / review-2（上下）   ← レーン 2 以降は 1 レーン 1 タブ
 ```
 
-役割の末尾の `-N` がレーンの番号で（無ければ 1）、1 レーンに置けるのは 2 席まで。席の並びはこの順で、縦には重ねない。
+役割の末尾の `-N` がレーンの番号で（無ければ 1）、1 レーンに置けるのは 2 席まで。1 タブは 4 ペインまでになる。
+並びを作り直すときは、席のペインを `herdr-app do terminal.park --terminal <t>` で外してから `up` する。
 各席には label の `herdr-team.role=<role>` を付け、Herdr app のサイドバー（dotfiles の paddock・agents-tree）はこれを行の名前に出す。
 
 ## 使い方（design 側）
 
-Herdr app のペインの中の端末（`HC_TERMINAL_ID` がある）から実行する。design のタブの分割の形は問わない（席は、そのタブの木の最後の端末の右に足される）。
+Herdr app のペインの中の端末（`HC_TERMINAL_ID` がある）から実行する。design のタブには design のペインだけがある状態で `up` する。
 
 ```bash
 S=~/.claude/skills/herdr-agent-team/scripts/herdr-team.sh
@@ -32,7 +34,7 @@ S=~/.claude/skills/herdr-agent-team/scripts/herdr-team.sh
 bash $S init --team <T> --repo <repo>          # 既定の席で設定を作る
 bash $S init --team <T> --repo <repo> --set implementation.model=gpt-6.2-sol --set implementation.effort=medium \
   --set implementation-2.kind=opencode --set implementation-2.model=opencode-go/glm-5.3-flash
-bash $S up --team <T>                          # 席を起動してペインに並べる（冪等。ペインの無い席だけを足す）
+bash $S up --team <T>                          # 席を起動してペインに並べる（冪等。ペインの無い席だけを正しい位置に足す）
 bash $S restart --team <T> --role <role> [--cwd <dir>]   # 席の agent を同じ端末・同じペインの中で起動し直す
 bash $S worktree add --team <T> --unit <unit> --branch <b>   # ~/herdr/workspaces/<repo>/<unit> に作る
 bash $S worktree rm --team <T> --unit <unit>   # main に入っていて変更が無く、席がいなければ消す（--keep-branch: ブランチを残して worktree だけ消す）
@@ -64,7 +66,7 @@ codex の席は `tier=fast` で Fast（`-c service_tier`）にできる。kind �
 
 1. **長い指示は必ずファイルにする。** 端末に送るのは `Read and execute the task envelope at <path>` の1行だけ。`tell` は 400 文字を超える行を断る。
 2. **`up` は Herdr app のペインの中で実行する。** design のペインが見えないと、席はペインの無い端末のまま動く（サイドバーの木にも出ない）。
-   design のタブに他のペインがあって木が横一列でないと、幅は変えない（席は最後の端末の右に足される）。
+   design のタブに他のペインがあると、幅の比（45 / 20 / 35）が崩れる。
 3. **design を閉じても orchestrator は残る**（`--no-parent`）。design への報告先は team 設定の `design` なので、
    design を別の端末で起こし直したら、その端末で `up` を実行する（動いている席はそのまま残り、報告先だけ変わる）。
 4. **orchestrator を終えると席も終わる。** 席は orchestrator の子である。

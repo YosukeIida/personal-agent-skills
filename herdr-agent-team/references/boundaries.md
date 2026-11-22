@@ -5,7 +5,7 @@
 | 領域 | 具体 |
 |---|---|
 | 席の端末 | 役割ごとに 1 端末。名前は `<team>-<role>`。どの kind / model / effort / account で起動するか |
-| 席の置き場 | design のタブへ label で取り込み、横一列に並べる（focus は動かさない） |
+| 席の置き場 | design のタブを割って並べ、レーン 2 以降は 1 レーン 1 タブにする |
 | 親子関係 | 他の席は orchestrator の子。orchestrator は親を持たない（`--no-parent`）。design の端末は `up` が team 設定の `design` に書く |
 | 仕事の受け渡し | 指示書ファイルのパスを1行で送る（`hc send`） |
 | 待ち受け | `hc wait --children any` |
@@ -27,20 +27,21 @@ hc には Orca の Run・Task・Dispatch のような委譲の帳簿が無い。
 
 ## design のタブに並べる理由と幅
 
-user が読み書きするのは design だけなので、design を一番広く（30%）取る。orchestrator は普段見ないが、
-サイドバーの木の親になり、止まったときに画面を読むため、細く（20%）残す。残りの席は 50% を等分する。
+user が読み書きするのは design だけなので、design を一番広く（45%）取る。orchestrator は普段見ないが、
+サイドバーの木の親になり、止まったときに画面を読むため、細く（20%）残す。レーン 1 の implementation と review は
+右の列に上下で置く（35%）。レーン 2 以降は design の画面を変えないように、1 レーン 1 タブに上下で置く。1 タブは 4 ペインまでになる（owner の指定、2026-11-22）。
 
-席はペインの無い端末として起こし、`hc label <席> herdr.space=<design の space> herdr.tab=<design の tab>` で design のタブへ取り込む。
-focus は動かず、親子と名前は保たれる。取り込まれた席は、そのタブの分割の木の最後の端末の右に、1 席ずつ足される
-（開始時が design だけの row でも、縦に割られた形でも同じ。2026-11-22、Herdr app 0.1.16・herdr-core 0.1.21 で実測）。
-取り込みは非同期なので、1 席ずつペインができるのを待ってから次を足す（続けて label すると足される順が入れ替わった）。
-全席が木に載ってから、`layout.resize` で幅を決める。決めるのは、ルートの row の直下がすべて端末で、先頭が design・orchestrator のときだけである。
+席はペインの無い端末として起こし、`herdr-app do terminal.keep --terminal <t> --place right|down` で、
+focus したペインの右か下に出す（place を省くと新しいタブ）。keep は `pending` を返し、ペインは後からできるので、
+次の分割の前に `herdr-app ls` でペインができたのを待つ。keep は label の `herdr.space`・`herdr.tab` を付け、親子と名前は保つ
+（2026-11-06、herdr-core 0.1.18・Herdr app 0.1.13 で実測）。
 
-`terminal.keep --place right|down` は採らない。基準が focus 中のペインで、基準を指す引数が無い（`terminal.keep` の引数は `terminal` と `place` だけ）ため、
-置くたびに focus が design のペインへ移り、user が別の space を見ていても画面が動いた。`terminal.show --pane` も focus を動かした。
-`pane.split --pane` は focus を動かさないが、アプリが新しい端末を作るので、`hc run --parent` で起こした席を取り込めない（親が `null` になる）。
-代わりに、implementation と review を縦に重ねる分割は作れない。上流では focus を動かさない指定が `space.new`・`tab.new` に入った
-（herdrdev/herdr-app の PR #602）。`pane.split`・`terminal.open`・`terminal.keep` は未対応で、#883 が未解決である。
+keep の基準は focus 中のペインで、基準を指す引数が無い。そのため置くたびに focus が design のタブへ移り、user が別の space を見ていても画面が動く。
+focus を動かさない `hc label` の取り込みはタブの木の最後の端末の右にしか足せず、上下に重ねられないので採らない（2026-11-22 に一度採り、owner の指定で戻した）。
+`pane.split --pane` は focus を動かさないが、新しい端末を作るので `hc run --parent` で起こした席を取り込めない。上流の herdrdev/herdr-app #883 が入れば、focus を動かさずに上下に置ける。
+
+右に割ると、割られたペインと新しいペインの重みが半分ずつになる。design（重み 1）→ orchestrator → 右の列と割ると
+0.5・0.25・0.25 になるので、`up` は幅を 45 / 20 / 35 に直す（2026-11-22 に実測）。
 
 分割の木と重みは `hc connect` の `doc.get {name:"herdr-app"}` で読める。Herdr app が開いていなければ、席は動くがペインには出ない。
 
@@ -70,7 +71,8 @@ worktree は Orca と同じく専用の場所 `~/herdr/workspaces/<repo>/<unit>`
 - `restart` は端末を作り直さず、同じ端末の中で agent だけを起動し直す。agent を止めると zsh が残るので、そこへ起動の行を送る。
   端末を作り直す方式では、古いペインが閉じる処理と新しいペインを置く処理が
   Herdr app の中で競合し、新しいペインが後から消えた（数回再現。止める前の端末がペインを持っていたときだけ起きた）
-- `up` の配置はペインの無い席だけを足す。幅は `doc.get` の木で目標とずれているときだけ直す
+- `up` の配置はペインの無い席だけを足す。上の席だけが無ければ、下の席の下に置いて `pane.swap` で上下を入れ替える。幅は `doc.get` の木で目標とずれているときだけ直す。
+  起動した直後の端末は `terminal.keep` を断られることがあるので、数回やり直す
 - `worktree rm` は、ブランチが repo の今のブランチ（main）に入っていて、commit していない変更が無く、どの席もその worktree にいないときだけ消す。ブランチは `git branch -d` で消す。`--keep-branch` を付けると、main に入っていないブランチでも worktree だけを消し、ブランチは残す（commit は失われない）
 
 kind ごとの操作（2026-11-06、claude 2.1.316・codex 0.166.0・opencode 2.2.5 で、切り替え後に前の指示を答えられないことを確かめた）:
