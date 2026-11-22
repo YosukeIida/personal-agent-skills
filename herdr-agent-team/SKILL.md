@@ -35,7 +35,7 @@ bash $S init --team <T> --repo <repo> --set implementation.model=gpt-6.2-sol --s
 bash $S up --team <T>                          # 席を起動してペインに並べる（冪等。ペインの無い席だけを足す）
 bash $S restart --team <T> --role <role> [--cwd <dir>]   # 席の agent を同じ端末・同じペインの中で起動し直す
 bash $S worktree add --team <T> --unit <unit> --branch <b>   # ~/herdr/workspaces/<repo>/<unit> に作る
-bash $S worktree rm --team <T> --unit <unit>   # main に入っていて変更が無く、席がいなければ消す
+bash $S worktree rm --team <T> --unit <unit>   # main に入っていて変更が無く、席がいなければ消す（--keep-branch: ブランチを残して worktree だけ消す）
 
 # 仕事を渡す: 指示をファイルに書き、パスだけを送る
 bash $S tell --team <T> --role orchestrator --envelope ~/.config/herdr-agent-team/<T>/envelopes/<file>.md

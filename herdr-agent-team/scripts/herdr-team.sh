@@ -318,10 +318,11 @@ own_worktree() {
 cmd_worktree() {
   load_config
   local sub="${1:-}"; [ $# -gt 0 ] && shift
-  local unit="" branch="" from="" repo dir b i
+  local unit="" branch="" from="" keep=0 repo dir b i
   while [ $# -gt 0 ]; do
     case "$1" in
       --unit)   unit="$2"; shift 2 ;;
+      --keep-branch) keep=1; shift ;;
       --branch) branch="$2"; shift 2 ;;
       --from)   from="$2"; shift 2 ;;
       *) die "worktree: 不明な引数 $1" ;;
@@ -347,16 +348,16 @@ cmd_worktree() {
       [ -d "$dir" ] || die "無い: $dir"
       b="$(git -C "$dir" branch --show-current)"
       [ -z "$(git -C "$dir" status --porcelain)" ] || die "$dir に commit していない変更がある"
-      [ -n "$b" ] && git -C "$repo" merge-base --is-ancestor "$b" "$(git -C "$repo" branch --show-current)" \
-        || die "$b は $(git -C "$repo" branch --show-current) に入っていない"
+      [ "$keep" = 1 ] && [ -n "$b" ] || { [ -n "$b" ] && git -C "$repo" merge-base --is-ancestor "$b" "$(git -C "$repo" branch --show-current)"; } \
+        || die "$b は $(git -C "$repo" branch --show-current) に入っていない（branch を残して worktree だけ消すなら --keep-branch）"
       for i in $(seat_roles); do
         case "$(live "$(seat "$i")" | jq -r '.foreground.cwd // empty')/" in
           "$dir"/*) die "$i がこの worktree で動いている。次の単位を渡すか restart --role $i で移してから消す" ;;
         esac
       done
       git -C "$repo" worktree remove "$dir"
-      git -C "$repo" branch -d "$b" >/dev/null
-      info "消した: ${dir}（${b}）" ;;
+      if [ "$keep" = 1 ]; then info "消した: ${dir}（${b} は残した）"
+      else git -C "$repo" branch -d "$b" >/dev/null; info "消した: ${dir}（${b}）"; fi ;;
     *) die "worktree add|rm" ;;
   esac
 }
@@ -454,7 +455,7 @@ usage: herdr-team.sh <command> --team <T> [options]
   up     --team T
   restart --team T --role <role> [--cwd <dir>]   席の agent を同じ端末（同じペイン）の中で起動し直す
   worktree add --team T --unit <unit> --branch <b> [--from <rev>]   <WORKSPACES>/<repo>/<unit> に作る
-  worktree rm  --team T --unit <unit>    main に入っていて変更が無ければ worktree とブランチを消す
+  worktree rm  --team T --unit <unit> [--keep-branch]   main に入っていて変更が無ければ worktree とブランチを消す。--keep-branch: main に入っていなくても worktree だけ消し、ブランチは残す
   tell   --team T --role <role|design> (--envelope <file> [--keep-session] | --text <1行>)   --keep-session: 単位が変わってもセッションを続ける
   wait   --team T [--timeout <s>]
   status --team T

@@ -71,7 +71,7 @@ worktree は Orca と同じく専用の場所 `~/herdr/workspaces/<repo>/<unit>`
   端末を作り直す方式では、古いペインが閉じる処理と新しいペインを置く処理が
   Herdr app の中で競合し、新しいペインが後から消えた（数回再現。止める前の端末がペインを持っていたときだけ起きた）
 - `up` の配置はペインの無い席だけを足す。幅は `doc.get` の木で目標とずれているときだけ直す
-- `worktree rm` は、ブランチが repo の今のブランチ（main）に入っていて、commit していない変更が無く、どの席もその worktree にいないときだけ消す。ブランチは `git branch -d` で消す
+- `worktree rm` は、ブランチが repo の今のブランチ（main）に入っていて、commit していない変更が無く、どの席もその worktree にいないときだけ消す。ブランチは `git branch -d` で消す。`--keep-branch` を付けると、main に入っていないブランチでも worktree だけを消し、ブランチは残す（commit は失われない）
 
 kind ごとの操作（2026-11-06、claude 2.1.316・codex 0.166.0・opencode 2.2.5 で、切り替え後に前の指示を答えられないことを確かめた）:
 
