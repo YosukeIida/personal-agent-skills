@@ -1,16 +1,16 @@
 ---
-name: herdr-peek-agent
+name: peek-hc-agent
 description: >-
   hc の端末の中（HC_TERMINAL_ID がある）で動くセッションでは、Codex への委譲（調査・診断・review・実装）を
   codex plugin の codex:rescue ではなくこの skill で行う。Codex（または頼まれたときは別の Claude Code）を
   herdr-core（hc）の端末として起動し、Herdr app で呼び出し元の行の下に出して peek で見られるようにする。
   結果は hc wait と hc read で受け取る。
   「Codex で調べて」「Codex に調査させて」「Codex に実装させて」「Codex に見てもらって」
-  「バックグラウンドで Codex に頼んで」「peek で見られるように動かして」「別の Claude Code に頼んで」などで使う。
+  「バックグラウンドで Codex に頼んで」「bg で処理して」「bg で調査して」「peek で見られるように動かして」「別の Claude Code に頼んで」などで使う。
   ※役割ごとの席を並べるチームは herdr-agent-team が担当する。hc の一般操作は `hc --skill` が担当する。
 ---
 
-# herdr-peek-agent
+# peek-hc-agent
 
 agent（Codex か Claude Code）を呼び出し元の子の端末として起動する。core が呼び出し元を `parent` として記録するので、Herdr app の Agents では呼び出し元の行の下に出て、押すと peek の小窓で agent の画面が見え、keep で tab にできる。
 
@@ -42,11 +42,11 @@ agent（Codex か Claude Code）を呼び出し元の子の端末として起動
 
    ```sh
    # Codex
-   cd <repo> && hc run --bg --label herdr-peek-agent=1 "CODEX_HOME=\$HOME/.codex-personal codex -s read-only \"\$(cat $f)\""
+   cd <repo> && hc run --bg --label peek-hc-agent=1 "CODEX_HOME=\$HOME/.codex-personal codex -s read-only \"\$(cat $f)\""
    # Claude Code
-   cd <repo> && hc run --bg --label herdr-peek-agent=1 "claude \"\$(cat $f)\""
+   cd <repo> && hc run --bg --label peek-hc-agent=1 "claude \"\$(cat $f)\""
    ```
-   label `herdr-peek-agent=1` は、セッションの終了時に閉じる対象の目印である（「閉じる時機」）。外さない。
+   label `peek-hc-agent=1` は、セッションの終了時に閉じる対象の目印である（「閉じる時機」）。外さない。
    出力の JSON の `address`（例: `t1bg`）が agent の端末で、`parent` が呼び出し元である。user に端末の番号と、Agents の呼び出し元の行の下で peek できることを伝える。
 3. 終わりを待つ。Bash の `run_in_background` で次を起動し、完了の通知を受ける。ポーリングはしない。`hc wait` は timeout のほか、呼び出し元への message でも返るので、agent が `working` を報告している間だけ待ち直す。
    ```sh
@@ -82,4 +82,4 @@ hc ls --json | jq -r --arg p "$HC_TERMINAL_ID" '.terminals[] | select(.parent ==
 
 閉じたら、閉じた端末と、再開に使う ID（Codex はスレッド ID）を返答に書く。
 
-子は呼び出し元の Claude Code ではなく、呼び出し元の端末に属する。端末の program は Claude Code を起動した zsh なので、`hc run` の既定（`die_with_parent`）は Claude Code の終了では効かない。そのため、Claude Code の SessionEnd hook（dotfiles の `claude/hooks/herdr-peek-agent-cleanup.sh`）が、セッションの終了時（ctrl-c、`/exit`、`/clear`）に、その端末の子のうち label `herdr-peek-agent=1` の agent を状態によらず閉じる。作業中の agent も閉じるが、会話は上の方法で再開できる。
+子は呼び出し元の Claude Code ではなく、呼び出し元の端末に属する。端末の program は Claude Code を起動した zsh なので、`hc run` の既定（`die_with_parent`）は Claude Code の終了では効かない。そのため、Claude Code の SessionEnd hook（dotfiles の `claude/hooks/peek-hc-agent-cleanup.sh`）が、セッションの終了時（ctrl-c、`/exit`、`/clear`）に、その端末の子のうち label `peek-hc-agent=1` の agent を状態によらず閉じる。作業中の agent も閉じるが、会話は上の方法で再開できる。
