@@ -34,8 +34,9 @@ Codex を呼び出し元の子の端末として起動する。core が呼び出
    - 調査・診断・review: `-s read-only`
    - 実装（ファイルの書き換えを伴う）: `-s workspace-write`
    ```sh
-   cd <repo> && hc run --bg "CODEX_HOME=\$HOME/.codex-personal codex -s read-only \"\$(cat $f)\""
+   cd <repo> && hc run --bg --label codex-in-hc=1 "CODEX_HOME=\$HOME/.codex-personal codex -s read-only \"\$(cat $f)\""
    ```
+   label `codex-in-hc=1` は、セッションの終了時に閉じる対象の目印である（「閉じる時機」）。外さない。
    出力の JSON の `address`（例: `t1bg`）が Codex の端末で、`parent` が呼び出し元である。user に端末の番号と、Agents の呼び出し元の行の下で peek できることを伝える。
 3. 終わりを待つ。Bash の `run_in_background` で次を起動し、完了の通知を受ける。ポーリングはしない。`hc wait` は timeout のほか、呼び出し元への message でも返るので、Codex が `working` を報告している間だけ待ち直す。
    ```sh
@@ -66,4 +67,4 @@ hc ls --json | jq -r --arg p "$HC_TERMINAL_ID" '.terminals[] | select(.parent ==
 
 閉じたら、閉じた端末と、再開に使うスレッド ID を返答に書く。スレッド ID は `<CODEX_HOME>/state_5.sqlite` の `threads` 表から、cwd と作成時刻で引く。
 
-子は呼び出し元の Claude Code ではなく、呼び出し元の端末に属する。端末の program は Claude Code を起動した zsh なので、Claude Code を ctrl-c などで終えても子は残り、同じ端末で次に起動した Claude Code の子として上の規則で片付く。端末（pane）を閉じて zsh が終わると、`hc run` の既定（`die_with_parent`）で子も終わる。
+子は呼び出し元の Claude Code ではなく、呼び出し元の端末に属する。端末の program は Claude Code を起動した zsh なので、`hc run` の既定（`die_with_parent`）は Claude Code の終了では効かない。そのため、Claude Code の SessionEnd hook（dotfiles の `claude/hooks/codex-in-hc-cleanup.sh`）が、セッションの終了時（ctrl-c、`/exit`、`/clear`）に、その端末の子のうち label `codex-in-hc=1` の Codex を状態によらず閉じる。作業中の Codex も閉じるが、会話は上の `codex resume` で再開できる。
